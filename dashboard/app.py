@@ -145,6 +145,37 @@ st.markdown(
         from { background-position: 28px 0; }
         to   { background-position: 0 0; }
     }
+
+    /* ====== TABELA DE LEADS — visual de tabela real ====== */
+    /* Tudo APOS o marcador .leads-table-start fica estilizado */
+    .leads-table-start ~ div[data-testid="stHorizontalBlock"] {
+        border-bottom: 1px solid #2a2a2a !important;
+        margin: 0 !important;
+        padding: 4px 0 !important;
+        gap: 0 !important;
+    }
+    .leads-table-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"] {
+        border-right: 1px solid #3a3a3a !important;
+        padding: 4px 8px !important;
+        font-size: 12px !important;
+        line-height: 1.35 !important;
+        min-width: 0 !important;
+    }
+    .leads-table-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"]:last-child {
+        border-right: none !important;
+    }
+    /* Botao da prancheta menor e mais compacto */
+    .leads-table-start ~ div[data-testid="stHorizontalBlock"] button {
+        padding: 2px 6px !important;
+        font-size: 13px !important;
+        min-height: 28px !important;
+        height: 28px !important;
+    }
+    /* Markdown dentro das celulas: zero margem */
+    .leads-table-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"] p {
+        margin: 0 !important;
+        font-size: 12px !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -757,30 +788,29 @@ with aba_leads:
     start_idx = (current_page - 1) * PAGE_SIZE
     df_page = df_f.iloc[start_idx:start_idx + PAGE_SIZE]
 
-    # Cabecalho da tabela manual
-    h = st.columns([0.5, 1.4, 1.4, 1, 1.2, 2.2, 1.6, 1.6])
-    h[0].markdown("**📋**")
-    h[1].markdown("**Score 🔥**")
-    h[2].markdown("**Sinais 🎯**")
-    h[3].markdown("**Cidade**")
-    h[4].markdown("**Nicho**")
-    h[5].markdown("**Nome**")
-    h[6].markdown("**Telefone**")
-    h[7].markdown("**Responsável**")
-    st.markdown(
-        '<hr style="margin:0;border:none;border-top:2px solid #444;">',
-        unsafe_allow_html=True,
-    )
+    # Marcador que ativa o CSS de tabela compacta a partir daqui
+    st.markdown('<div class="leads-table-start"></div>', unsafe_allow_html=True)
 
-    # Linhas manuais com botão 📋 real + progress bar + divisorias
+    COL_WIDTHS = [0.4, 1.3, 1.5, 0.9, 1.1, 2.0, 1.5, 1.4]
+
+    # Cabeçalho com fundo destacado
+    h = st.columns(COL_WIDTHS)
+    headers = ["📋", "Score 🔥", "Sinais 🎯", "Cidade", "Nicho", "Nome", "Telefone", "Responsável"]
+    for col, label in zip(h, headers):
+        col.markdown(
+            f"<div style='font-weight:700;font-size:11px;color:#bbb;text-transform:uppercase;letter-spacing:0.5px;background:#222;padding:6px 8px;margin:-4px -8px;'>{label}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Linhas
     for _, row in df_page.iterrows():
-        c = st.columns([0.5, 1.4, 1.4, 1, 1.2, 2.2, 1.6, 1.6])
+        c = st.columns(COL_WIDTHS)
         lead_id_row = int(row["id"])
 
         if c[0].button("📋", key=f"open_ficha_{lead_id_row}", help=f"Abrir ficha completa do lead #{lead_id_row}"):
             show_lead_dialog(lead_id_row)
 
-        # Score com progress bar custom + emoji só pra 90+
+        # Score com progress bar
         score = int(row["score_temperatura"])
         if score >= 90:
             score_prefix = "🔥 "
@@ -795,51 +825,41 @@ with aba_leads:
             score_prefix = ""
             grad = "linear-gradient(90deg,#546e7a,#78909c)"
         c[1].markdown(
-            f"""<div style="background:#1a1a1a;border-radius:6px;height:22px;position:relative;overflow:hidden;margin-top:2px;">
-              <div style="background:{grad};height:100%;width:{score}%;transition:width 0.4s;"></div>
-              <div style="position:absolute;top:0;left:0;right:0;text-align:center;line-height:22px;font-size:12px;font-weight:600;color:#fff;text-shadow:0 0 4px rgba(0,0,0,0.7);">{score_prefix}{score}%</div>
+            f"""<div style="background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;">
+              <div style="background:{grad};height:100%;width:{score}%;"></div>
+              <div style="position:absolute;top:0;left:0;right:0;text-align:center;line-height:18px;font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.7);">{score_prefix}{score}%</div>
             </div>""",
             unsafe_allow_html=True,
         )
 
-        # Sinais com count + categorias em fonte menor entre parenteses
+        # Sinais com categorias em fonte menor
         sinais = int(row.get("interest_count") or 0)
         cats = row.get("interest_categorias")
         if sinais > 0:
-            cats_str = f"<br><span style='color:#888;font-size:11px;'>({cats})</span>" if cats else ""
+            cats_str = f"<div style='color:#888;font-size:10px;line-height:1.2;margin-top:2px;'>({cats})</div>" if cats else ""
             c[2].markdown(
                 f"<span style='color:#4caf50;font-weight:600;'>🎯 {sinais}</span>{cats_str}",
                 unsafe_allow_html=True,
             )
         else:
-            c[2].markdown(
-                "<span style='color:#555;'>○ 0</span>",
-                unsafe_allow_html=True,
-            )
+            c[2].markdown("<span style='color:#555;'>○ 0</span>", unsafe_allow_html=True)
 
         c[3].markdown(f"{row['cidade_tag'] or '—'}")
-        c[4].markdown(f"{row['nicho'] or '—'}")
-        c[5].markdown(f"{row['nome'] or '(sem nome)'}")
+        c[4].markdown(f"<span style='font-size:11px;'>{row['nicho'] or '—'}</span>", unsafe_allow_html=True)
+        c[5].markdown(f"<span style='font-weight:500;'>{row['nome'] or '(sem nome)'}</span>", unsafe_allow_html=True)
 
         tel = row["telefone"]
         if tel and not pd.isna(tel):
             wa = _wa_url(tel)
-            c[6].markdown(f"[{tel}]({wa})")
+            c[6].markdown(f"<a href='{wa}' target='_blank' style='color:#4caf50;text-decoration:none;'>{tel}</a>", unsafe_allow_html=True)
         else:
-            c[6].markdown("—")
+            c[6].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
 
-        # Responsavel (do quadro societario via BrasilAPI)
         resp = row.get("responsavel")
         if resp and not pd.isna(resp):
-            c[7].markdown(f"{resp}")
+            c[7].markdown(f"<span style='font-size:11px;'>{resp}</span>", unsafe_allow_html=True)
         else:
             c[7].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
-
-        # Divisória entre linhas
-        st.markdown(
-            '<hr style="margin:6px 0;border:none;border-top:1px solid #2a2a2a;">',
-            unsafe_allow_html=True,
-        )
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
