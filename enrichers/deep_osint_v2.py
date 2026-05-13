@@ -80,6 +80,7 @@ async def aprofundar_v2(
     cnpj: str = "",
     telefone: str = "",
     site_url: str = "",
+    endereco_gmaps: str = "",
 ) -> DeepOsintV2Result:
     """
     Roda TODAS as fontes em paralelo.
@@ -150,11 +151,16 @@ async def aprofundar_v2(
             res.textos["linkedin"] = (d.get("descricao") or "") + " " + (d.get("industry") or "")
             res.fontes_consultadas.append("linkedin_coleta")
 
-        # CNPJ: se nao tinha, buscamos. Depois consultamos BrasilAPI.
-        cnpj_a_consultar = cnpj or result_map.get("cnpj_buscar") or ""
-        if cnpj_a_consultar:
-            cnpj_data = await cnpj_socios.consultar_brasilapi(client, cnpj_a_consultar)
+        # CNPJ: se temos, usa direto. Se nao, busca com endereço + verifica proximidade.
+        if cnpj:
+            cnpj_data = await cnpj_socios.consultar_brasilapi(client, cnpj)
             res.cnpj_data = cnpj_data
+        else:
+            cnpj_data = await cnpj_socios.descobrir_cnpj_verificado(
+                client, nome, endereco_gmaps=endereco_gmaps, cidade=cidade, min_proximidade=60,
+            )
+            res.cnpj_data = cnpj_data
+        if res.cnpj_data:
             res.fontes_consultadas.append("brasilapi_cnpj")
 
         if result_map["reverse_phone"]:
@@ -172,15 +178,44 @@ async def aprofundar_v2(
             res.textos["reclame_aqui"] = res.reclame_aqui.get("texto_concatenado", "")
             res.fontes_consultadas.append("reclame_aqui")
 
-    # Roda detector de keywords em TODO o texto coletado
-    texto_total = " ".join(res.textos.values())
-    sinais, boost = detect(texto_total)
-    res.sinais = sinais
-    res.boost_score = boost
+    # Mapa: source_name → URL pra rastrear ONDE foi visto cada sinal
+    twitter_url = f"https://twitter.com/{res.twitter_username}" if res.twitter_username else ""
+    news_top = (res.news_mentions.get("urls", []) or [""])[0] if res.news_mentions else ""
+    reclame_top = (res.reclame_aqui.get("urls", []) or [""])[0] if res.reclame_aqui else ""
+    reverse_top = (res.reverse_phone_data.get("urls", []) or [""])[0] if res.reverse_phone_data else ""
+
+    source_url_map = {
+        "instagram":     res.instagram_url,
+        "tiktok":        res.tiktok_url,
+        "twitter":       twitter_url,
+        "linkedin":      res.linkedin_company_url,
+        "news":          news_top,
+        "reclame_aqui":  reclame_top,
+        "reverse_phone": reverse_top,
+    }
+
+    # Roda detector POR FONTE pra cada sinal saber sua origem real
+    all_sinais = []
+    categorias_aplicadas = set()
+    boost_total = 0
+    for source_name, texto in res.textos.items():
+        sinais_da_fonte, _ = detect(texto)
+        for s in sinais_da_fonte:
+            s.source_name = source_name
+            s.source_url = source_url_map.get(source_name, "")
+            all_sinais.append(s)
+            # Boost cumula 1x por categoria (de qualquer fonte)
+            if s.categoria not in categorias_aplicadas:
+                categorias_aplicadas.add(s.categoria)
+                boost_total += s.boost
+
+    # Aplica teto cumulativo
+    res.sinais = all_sinais
+    res.boost_score = min(boost_total, 50)
 
     log.info(
         f"  deep_osint_v2: {len(res.fontes_consultadas)} fontes, "
-        f"{len(sinais)} sinais, boost +{boost}, "
+        f"{len(all_sinais)} sinais ({len(categorias_aplicadas)} categorias), boost +{res.boost_score}, "
         f"ig={bool(res.instagram_url)} tt={bool(res.tiktok_url)} "
         f"tw={bool(res.twitter_username)} li={bool(res.linkedin_company_url)} "
         f"cnpj={bool(res.cnpj_data)} reclame={res.reclame_aqui.get('n_resultados', 0)}"

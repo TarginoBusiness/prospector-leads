@@ -95,6 +95,17 @@ async def main(limit: int = 1000) -> None:
 
         cidade_str = lead.get("cidade") or cidade_nome.get(lead.get("cidade_tag") or "", "")
 
+        # Extrai endereço do gmaps (já temos no raw_payload do scrape original)
+        endereco_gmaps = ""
+        try:
+            rp = lead.get("raw_payload") or {}
+            if isinstance(rp, str):
+                rp = json.loads(rp)
+            endereco_gmaps = (rp.get("gmaps") or {}).get("endereco", "") or \
+                             (rp.get("deep_enrich") or {}).get("endereco", "")
+        except Exception:
+            pass
+
         try:
             r = await aprofundar_v2(
                 nome=lead["nome"],
@@ -102,19 +113,20 @@ async def main(limit: int = 1000) -> None:
                 cidade_tag=lead.get("cidade_tag") or "",
                 cnpj=lead.get("cnpj") or "",
                 telefone=lead.get("telefone") or "",
-                site_url="",  # site ja eh coberto pelo deep_osint v1, aqui focamos em socials
+                site_url="",
+                endereco_gmaps=endereco_gmaps,
             )
         except Exception as e:
             log.exception(f"falhou aprofundar lead {lead['id']}: {e}")
             continue
 
-        # Salva sinais
+        # Salva sinais (agora com source_url real pra cada um)
         with get_conn() as c, c.cursor() as cur:
             for s in r.sinais:
                 cur.execute(
                     SQL_INSERT_INTEREST,
                     (lead["id"], f"interest_{s.categoria}", s.palavra_chave,
-                     s.trecho[:500], None, s.boost),
+                     s.trecho[:500], s.source_url or None, s.boost),
                 )
 
             # Salva perfis sociais descobertos

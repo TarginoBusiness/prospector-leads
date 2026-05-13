@@ -22,6 +22,8 @@ class InterestSignal:
     palavra_chave: str
     trecho: str
     boost: int
+    source_name: str = ""   # qual fonte detectou (instagram, tiktok, news, ...)
+    source_url: str = ""    # URL especifica onde o trecho foi visto
 
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "interest_keywords.yaml"

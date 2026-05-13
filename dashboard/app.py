@@ -253,11 +253,15 @@ def show_lead_dialog(lead_id: int) -> None:
 
     if interest:
         st.markdown("#### 🎯 Sinais de interesse detectados (Deep OSINT)")
+        st.caption("Cada sinal tem link 🔗 pra você verificar a fonte e confirmar se é real.")
         for s in interest:
             cat = s["categoria"].replace("interest_", "")
+            url_link = ""
+            if s.get("source_url"):
+                url_link = f' · <a href="{s["source_url"]}" target="_blank" style="color:#81c784;">🔗 ver fonte</a>'
             st.markdown(
                 f"""<div style="background:#1a3a1a;border-left:3px solid #4caf50;padding:8px 12px;margin:4px 0;border-radius:4px;">
-                <strong>🎯 {cat}</strong> · <code>+{s['boost']}</code><br>
+                <strong>🎯 {cat}</strong> · keyword: <code>{s['palavra_chave']}</code> · <code>+{s['boost']}</code>{url_link}<br>
                 <span style="color:#999;font-size:13px;">"<i>{(s['trecho_texto'] or '')[:200]}</i>"</span>
                 </div>""",
                 unsafe_allow_html=True,
@@ -266,9 +270,12 @@ def show_lead_dialog(lead_id: int) -> None:
     if intent_actual:
         st.markdown("#### 🔥 Intent declarado (post pedindo serviço)")
         for s in intent_actual:
+            url_link = ""
+            if s.get("source_url"):
+                url_link = f' · <a href="{s["source_url"]}" target="_blank" style="color:#ef9a9a;">🔗 ver post</a>'
             st.markdown(
                 f"""<div style="background:#3a1a1a;border-left:3px solid #f44336;padding:8px 12px;margin:4px 0;border-radius:4px;">
-                <strong>🔥 {s['categoria']}</strong> · keyword: <code>{s['palavra_chave']}</code> · <code>+{s['boost']}</code><br>
+                <strong>🔥 {s['categoria']}</strong> · keyword: <code>{s['palavra_chave']}</code> · <code>+{s['boost']}</code>{url_link}<br>
                 <span style="color:#999;font-size:13px;">"<i>{(s['trecho_texto'] or '')[:200]}</i>"</span>
                 </div>""",
                 unsafe_allow_html=True,
@@ -734,10 +741,13 @@ with aba_leads:
         load_leads_full.clear()
         st.rerun()
 
-    st.caption("👆 Clica numa linha pra abrir a **ficha completa** do lead.")
+    st.info("👆 **Clica em qualquer linha** (especialmente na coluna 📋) pra abrir a ficha completa do lead.")
+
+    # Adiciona coluna "Ver Ficha" pra ficar visual mente OBVIO que dá clique
+    df_f["ver_ficha"] = "📋 Ver"
 
     show_cols = [
-        "id", "score_temperatura", "interest_count", "interest_categorias",
+        "ver_ficha", "id", "score_temperatura", "interest_count", "interest_categorias",
         "cidade_tag", "nicho", "source",
         "nome", "telefone", "whatsapp_link", "email", "status",
         "source_url", "first_seen_at", "last_deep_dive_at",
@@ -750,6 +760,7 @@ with aba_leads:
         on_select="rerun",
         key="leads_table",
         column_config={
+            "ver_ficha": st.column_config.TextColumn("📋 Ficha", width="small", help="Clica nessa linha pra abrir a ficha completa"),
             "id": st.column_config.NumberColumn("#", width="small"),
             "score_temperatura": st.column_config.ProgressColumn(
                 "Score 🔥", min_value=0, max_value=100, format="%d%%"
