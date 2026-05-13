@@ -40,7 +40,7 @@ GH_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GH_REPO = "TarginoBusiness/prospector-leads"
 
 
-# CSS pra flash amarelo + esconder TODOS os indicadores de "Running..."
+# CSS forte: mata o dim, mata indicadores, animacao na progress bar
 st.markdown(
     """
     <style>
@@ -57,7 +57,8 @@ st.markdown(
         border-radius: 6px;
         animation: flash-yellow 3s ease-out;
     }
-    /* Esconde todos os indicadores Streamlit de execucao em andamento */
+
+    /* ====== Esconde TODOS os indicadores de carregamento ====== */
     div[data-testid="stStatusWidget"],
     div[data-testid="stDecoration"],
     div[data-testid="stToolbar"],
@@ -68,15 +69,99 @@ st.markdown(
         display: none !important;
         visibility: hidden !important;
     }
-    /* Some o header inteiro */
     header[data-testid="stHeader"] {
         background: transparent;
         height: 0 !important;
+    }
+
+    /* ====== MATA O DIM (overlay escuro durante refresh do fragment) ====== */
+    /* Streamlit aplica data-stale="true" + opacity baixa quando o fragment
+       esta rerodando. Forcamos opacity:1 sempre. */
+    [data-stale="true"],
+    [data-stale="false"] {
+        opacity: 1 !important;
+        transition: none !important;
+    }
+    .stApp [class*="running"],
+    .stApp [class*="stale"] {
+        opacity: 1 !important;
+        filter: none !important;
+    }
+    /* Mata todas as transicoes de opacidade do streamlit */
+    div[data-testid="stAppViewContainer"] *,
+    div[data-testid="stMain"] * {
+        transition-property: none !important;
+    }
+
+    /* ====== Progress bar CUSTOM bonita com animacao stripes ====== */
+    .custom-progress-wrapper {
+        background: #1a1a1a;
+        border-radius: 10px;
+        height: 28px;
+        padding: 3px;
+        margin: 12px 0;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+    }
+    .custom-progress-bar {
+        height: 100%;
+        border-radius: 8px;
+        background: linear-gradient(90deg, #ff4b4b, #ff8c42, #ffa726);
+        background-size: 200% 200%;
+        position: relative;
+        overflow: hidden;
+        animation: gradient-shift 3s ease infinite;
+        transition: width 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        box-shadow: 0 0 8px rgba(255, 75, 75, 0.5);
+    }
+    .custom-progress-bar::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: linear-gradient(
+            45deg,
+            rgba(255,255,255,0.2) 25%, transparent 25%,
+            transparent 50%, rgba(255,255,255,0.2) 50%,
+            rgba(255,255,255,0.2) 75%, transparent 75%, transparent
+        );
+        background-size: 28px 28px;
+        animation: progress-stripes 1.2s linear infinite;
+        border-radius: 8px;
+    }
+    .custom-progress-label {
+        display: flex;
+        justify-content: space-between;
+        margin: 6px 4px;
+        color: #e0e0e0;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    @keyframes gradient-shift {
+        0%   { background-position: 0% 50%; }
+        50%  { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    @keyframes progress-stripes {
+        from { background-position: 28px 0; }
+        to   { background-position: 0 0; }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+def render_progress_bar(label: str, pct: float, sub: str = "") -> None:
+    """Progress bar custom com animacao bonita."""
+    pct_int = int(pct * 100)
+    html = f"""
+    <div class="custom-progress-label"><span>{label}</span><span>{pct_int}%</span></div>
+    <div class="custom-progress-wrapper">
+        <div class="custom-progress-bar" style="width: {pct_int}%"></div>
+    </div>
+    """
+    if sub:
+        html += f'<div style="color:#999;font-size:12px;margin:4px 4px 0;">{sub}</div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ============== Data loaders ==============
@@ -156,9 +241,15 @@ def load_runs() -> pd.DataFrame:
 
 @st.cache_data(ttl=5, show_spinner=False)
 def load_active_run() -> dict | None:
+    """
+    Run ATIVO de scraper. Filtra rows antigas (mais de 1h sem updates)
+    pra nao mostrar barra fantasma de runs cancelados/orfaos.
+    """
     sql = """
         SELECT id, source, started_at, pages_ok, pages_failed, leads_new, leads_updated
-        FROM scrape_runs WHERE ended_at IS NULL
+        FROM scrape_runs
+        WHERE ended_at IS NULL
+          AND started_at > NOW() - INTERVAL '1 hour'
         ORDER BY started_at DESC LIMIT 1
     """
     with get_conn() as c, c.cursor() as cur:
@@ -223,19 +314,22 @@ def painel_ao_vivo():
     """
     df = load_leads_compact()
 
-    # Barra de progresso se tem scrape ativo
+    # Barra de progresso APENAS se tem scrape ativo de verdade (filtra stale)
     active = load_active_run()
     if active:
         elapsed = (datetime.now(timezone.utc) - active["started_at"]).total_seconds()
         eta_map = {"gmaps": 2700, "workana": 180, "99freelas": 180}
         eta = eta_map.get(active["source"], 600)
         progress = min(elapsed / eta, 0.95)
-        st.progress(
-            progress,
-            text=(
-                f"⏳ **{active['source']}** rodando há {int(elapsed)}s "
-                f"— {active['leads_new']} leads novos, {active['leads_updated']} atualizados, "
-                f"{active['pages_ok']} páginas OK"
+        source_emoji = {"gmaps": "🗺️", "workana": "🕵️", "99freelas": "💼"}.get(active["source"], "⏳")
+        render_progress_bar(
+            label=f"{source_emoji} {active['source'].upper()} rodando",
+            pct=progress,
+            sub=(
+                f"⏱️ {int(elapsed)}s · "
+                f"✨ {active['leads_new']} novos · "
+                f"🔄 {active['leads_updated']} atualizados · "
+                f"📄 {active['pages_ok']} páginas OK"
             ),
         )
 
