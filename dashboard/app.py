@@ -877,7 +877,7 @@ with aba_leads:
 
         rows_html.append(
             f'<tr>'
-            f'<td><a href="?lead_id={lead_id_row}" class="ficha-btn">📋</a></td>'
+            f'<td><a href="javascript:void(0)" onclick="window.top.location.search=\'?lead_id={lead_id_row}\';return false;" class="ficha-btn">📋</a></td>'
             f'<td>{score_html}</td>'
             f'<td>{sinais_html}</td>'
             f'<td>{_esc(row["cidade_tag"]) or "—"}</td>'
