@@ -48,6 +48,20 @@ def load_leads() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60)
+def load_social_profiles() -> pd.DataFrame:
+    sql = """
+        SELECT lead_id, plataforma, url, fonte, confianca, discovered_at
+        FROM social_profiles
+        ORDER BY discovered_at DESC
+    """
+    with get_conn() as c, c.cursor() as cur:
+        cur.execute(sql)
+        cols = [d.name for d in cur.description]
+        rows = cur.fetchall()
+    return pd.DataFrame(rows, columns=cols)
+
+
+@st.cache_data(ttl=60)
 def load_runs() -> pd.DataFrame:
     sql = """
         SELECT id, source, started_at, ended_at,
@@ -68,7 +82,7 @@ def load_runs() -> pd.DataFrame:
 st.title("🔥 Prospector Leads")
 st.caption("Webscraping continuo de clientes potenciais. Quanto mais quente o lead (score %), mais urgente o contato.")
 
-aba_leads, aba_saude = st.tabs(["📋 Leads", "🩺 Saude dos scrapers"])
+aba_leads, aba_dossie, aba_saude = st.tabs(["📋 Leads", "🕵️ Dossiê OSINT", "🩺 Saude dos scrapers"])
 
 with aba_leads:
     df = load_leads()
@@ -143,6 +157,38 @@ with aba_leads:
     # Export
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
+
+with aba_dossie:
+    st.subheader("🕵️ Dossiê OSINT — perfis sociais cruzados")
+    st.caption("Perfis encontrados via username pivoting + DuckDuckGo dorks.")
+
+    socials = load_social_profiles()
+    if socials.empty:
+        st.info("Nenhum perfil OSINT capturado ainda. Roda o enriquecimento.")
+    else:
+        # Agrupa por lead
+        df_leads = load_leads()[["id", "nome", "telefone", "cidade_tag", "score_temperatura"]]
+        df_leads.columns = ["lead_id", "nome", "telefone", "cidade_tag", "score"]
+        merged = socials.merge(df_leads, on="lead_id", how="left")
+
+        col1, col2 = st.columns(2)
+        col1.metric("Total de perfis", len(socials))
+        col2.metric("Leads com perfil OSINT", merged["lead_id"].nunique())
+
+        plats_disp = ["(todas)"] + sorted(socials["plataforma"].unique())
+        plat_sel = st.multiselect("Plataforma", plats_disp, default=["(todas)"])
+        if "(todas)" not in plat_sel and plat_sel:
+            merged = merged[merged["plataforma"].isin(plat_sel)]
+
+        st.dataframe(
+            merged[["lead_id", "nome", "plataforma", "url", "score", "cidade_tag", "fonte", "confianca"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "url": st.column_config.LinkColumn("Perfil", display_text="Abrir"),
+                "confianca": st.column_config.ProgressColumn("Confiança", min_value=0, max_value=100, format="%d%%"),
+            },
+        )
 
 with aba_saude:
     runs = load_runs()

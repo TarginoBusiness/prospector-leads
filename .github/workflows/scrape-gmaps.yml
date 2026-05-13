@@ -1,0 +1,23 @@
+name: Scrape Google Maps (varredura larga)
+
+on:
+  schedule:
+    - cron: "0 5 * * *"   # 1x/dia as 5h UTC (2h Brasilia)
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120   # varredura larga = lenta
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install --upgrade pip && pip install -r requirements-scrapers.txt
+      - run: playwright install --with-deps chromium
+      - env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APP_ENV: prod
+        run: python -m scrapers.gmaps

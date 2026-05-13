@@ -75,6 +75,19 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_source_started ON scrape_runs(source, started_at DESC);
 
+-- Perfis sociais encontrados via OSINT (cross-reference)
+CREATE TABLE IF NOT EXISTS social_profiles (
+    id          BIGSERIAL PRIMARY KEY,
+    lead_id     BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+    plataforma  TEXT NOT NULL,            -- instagram, github, twitter, facebook, linkedin, ...
+    url         TEXT NOT NULL,
+    fonte       TEXT NOT NULL,            -- username_pivot | dork | manual
+    confianca   INT NOT NULL DEFAULT 50,  -- 0-100, quao confiantes estamos que e a pessoa certa
+    discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (lead_id, plataforma, url)
+);
+CREATE INDEX IF NOT EXISTS idx_social_lead ON social_profiles(lead_id);
+
 -- Falhas pra revisar manualmente
 CREATE TABLE IF NOT EXISTS dead_letter (
     id          BIGSERIAL PRIMARY KEY,

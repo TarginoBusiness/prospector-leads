@@ -16,6 +16,7 @@ from playwright.async_api import async_playwright
 from db.connection import get_conn
 from enrichers.brasilapi import consultar_cnpj
 from enrichers.extractors import extract_all
+from enrichers.osint import enriquecer_osint
 from enrichers.workana_detail import enriquecer as enriquecer_workana
 
 log = logging.getLogger("enricher.pipeline")
@@ -146,7 +147,42 @@ async def enriquecer_lead(page, lead: dict) -> dict | None:
                 "situacao": cnpj_data.situacao,
             }
 
-    # === FONTE 3: regex no raw_payload (descricao + titulo armazenados) ===
+    # === FONTE 3: OSINT (username pivot + DDG dorks) ===
+    workana_username = ""
+    if achados["payload_extra"].get("workana_detail"):
+        workana_username = achados["payload_extra"]["workana_detail"].get("cliente_username", "")
+
+    if workana_username or (achados.get("nome") and achados.get("cidade")):
+        osint = await enriquecer_osint(
+            username=workana_username,
+            nome=achados.get("nome") or "",
+            cidade=achados.get("cidade") or "",
+            nicho="",
+        )
+        if osint.perfis_encontrados:
+            achados["payload_extra"]["osint_perfis"] = osint.perfis_encontrados
+            achados["score_boost"] += min(10, len(osint.perfis_encontrados) * 2)
+            achados["breakdown_extra"]["osint_perfis"] = min(10, len(osint.perfis_encontrados) * 2)
+            # Salva perfis na tabela social_profiles
+            with get_conn() as c, c.cursor() as cur:
+                for plat, url in osint.perfis_encontrados.items():
+                    cur.execute(
+                        """INSERT INTO social_profiles (lead_id, plataforma, url, fonte, confianca)
+                           VALUES (%s, %s, %s, 'username_pivot', 70)
+                           ON CONFLICT DO NOTHING""",
+                        (lead_id, plat, url),
+                    )
+        if osint.contatos.telefones and not achados["telefone"]:
+            achados["telefone"] = osint.contatos.telefones[0]
+            achados["score_boost"] += 25
+            achados["breakdown_extra"]["osint_telefone"] = 25
+        if osint.contatos.emails and not achados["email"]:
+            achados["email"] = osint.contatos.emails[0]
+            achados["score_boost"] += 8
+        if osint.urls_dork:
+            achados["payload_extra"]["osint_dorks"] = osint.urls_dork[:20]
+
+    # === FONTE 4: regex no raw_payload (descricao + titulo armazenados) ===
     if lead.get("raw_payload"):
         payload = lead["raw_payload"]
         if isinstance(payload, str):
