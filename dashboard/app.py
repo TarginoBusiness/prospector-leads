@@ -281,10 +281,26 @@ def show_lead_dialog(lead_id: int) -> None:
         st.error("Lead não encontrado.")
         return
 
-    # Cabecalho
-    score = int(lead["score_temperatura"])
-    score_emoji = "🔥" if score >= 75 else "🟡" if score >= 50 else "🧊"
-    st.markdown(f"### {score_emoji} {lead['nome'] or '(sem nome)'} — Score **{score}%**")
+    # Cabecalho — mostra raw + relativo
+    raw_score = int(lead["score_temperatura"])
+    # Calcula relativo na hora baseado em todos os leads
+    try:
+        with get_conn() as c, c.cursor() as cur:
+            cur.execute("SELECT MIN(score_temperatura), MAX(score_temperatura) FROM leads")
+            mn, mx = cur.fetchone()
+            mn = mn or 0
+            mx = mx or 100
+            rng = max(mx - mn, 1)
+            rel_score = int(round(10 + 90 * (raw_score - mn) / rng))
+    except Exception:
+        rel_score = raw_score
+
+    score_emoji = "🔥" if rel_score >= 90 else "🟡" if rel_score >= 60 else "🧊"
+    st.markdown(
+        f"### {score_emoji} {lead['nome'] or '(sem nome)'} — "
+        f"**{rel_score}%** no ranking <span style='color:#888;font-size:14px;'>(raw: {raw_score} pts)</span>",
+        unsafe_allow_html=True,
+    )
 
     col1, col2 = st.columns(2)
     with col1:
@@ -708,12 +724,18 @@ def painel_ao_vivo():
 
     leads_piscando = list(flash_state.keys())
 
-    # Métricas com delta
+    # Métricas com delta — usa score RAW pra contar quentes (acima de 60 raw = top 25% provavelmente)
+    raw_min_m = int(df["score_temperatura"].min()) if len(df) else 0
+    raw_max_m = int(df["score_temperatura"].max()) if len(df) else 100
+    raw_range_m = max(raw_max_m - raw_min_m, 1)
+    # "Quente" = score relativo >= 60% (top 40% do ranking)
+    threshold_quente_raw = raw_min_m + (raw_range_m * 50) / 90  # rel 60% ↔ raw (~min + 55% do range)
+
     col1, col2, col3, col4, col5 = st.columns(5)
     delta_total = len(novos_ids) if novos_ids else None
     col1.metric("Total de leads", len(df), delta=delta_total)
-    col2.metric("Score médio", f"{df['score_temperatura'].mean():.0f}")
-    col3.metric("Quentes (≥60%)", int((df["score_temperatura"] >= 60).sum()))
+    col2.metric("Score médio", f"{df['score_temperatura'].mean():.0f} pts")
+    col3.metric("Top do ranking (≥60% rel)", int((df["score_temperatura"] >= threshold_quente_raw).sum()))
     col4.metric("Com telefone 📱", int(df["telefone"].notna().sum()))
     col5.metric(
         "Novos hoje",
@@ -779,7 +801,7 @@ with aba_leads:
         st.stop()
 
     fc1, fc2, fc3, fc4, fc5, fc6 = st.columns([2, 2, 2, 1, 1, 1])
-    score_min = fc1.slider("Score mínimo (%)", 0, 100, 50, step=5)
+    score_min_rel = fc1.slider("Score mínimo (relativo %)", 0, 100, 50, step=5, help="100% = top do ranking, 10% = última posição")
     cidades_disp = ["(todas)"] + sorted([c for c in df["cidade_tag"].dropna().unique()])
     cidade_sel = fc2.multiselect("Cidade", cidades_disp, default=["(todas)"])
     nichos_disp = ["(todos)"] + sorted([n for n in df["nicho"].dropna().unique()])
@@ -788,7 +810,14 @@ with aba_leads:
     so_com_tel = fc5.checkbox("📱 Só com telefone", value=False)
     so_com_sinal = fc6.checkbox("🎯 Apenas com alto interesse declarado", value=False, help="Só leads que têm ao menos 1 sinal de interesse detectado via Deep OSINT")
 
-    flt = df["score_temperatura"] >= score_min
+    # Converte score_min_rel pra raw threshold pra filtrar
+    raw_min_filt = int(df["score_temperatura"].min()) if len(df) else 0
+    raw_max_filt = int(df["score_temperatura"].max()) if len(df) else 100
+    raw_range_filt = max(raw_max_filt - raw_min_filt, 1)
+    # rel = 10 + 90*(raw-min)/range  ⇒  raw_threshold = min + range*(rel-10)/90
+    raw_threshold = raw_min_filt + raw_range_filt * max(0, score_min_rel - 10) / 90
+
+    flt = df["score_temperatura"] >= raw_threshold
     if "(todas)" not in cidade_sel and cidade_sel:
         flt &= df["cidade_tag"].isin(cidade_sel)
     if "(todos)" not in nicho_sel and nicho_sel:
@@ -816,7 +845,18 @@ with aba_leads:
         load_leads_full.clear()
         st.rerun()
 
-    st.caption(f"📊 **{len(df_f)} leads** no filtro · Tabela com scroll fluido (HTML nativo).")
+    # Score relativo: 100% = top 1 raw, 10% = ultimo. Linear baseado em min/max RAW.
+    raw_min = int(df["score_temperatura"].min()) if len(df) else 0
+    raw_max = int(df["score_temperatura"].max()) if len(df) else 100
+    raw_range = max(raw_max - raw_min, 1)
+
+    def _score_relativo(raw_int: int) -> int:
+        return int(round(10 + 90 * (raw_int - raw_min) / raw_range))
+
+    st.caption(
+        f"📊 **{len(df_f)} leads** no filtro · "
+        f"Score = ranking relativo (100% = top score atual de {raw_max} pts, 10% = menor de {raw_min} pts)."
+    )
 
     # Verifica query param "lead_id" — abre ficha se setado (click no botao 📋)
     qp_lead_id = st.query_params.get("lead_id")
@@ -839,7 +879,8 @@ with aba_leads:
     rows_html = []
     for _, row in df_f.iterrows():
         lead_id_row = int(row["id"])
-        score = int(row["score_temperatura"])
+        raw_score = int(row["score_temperatura"])
+        score = _score_relativo(raw_score)  # 10-100 baseado no ranking
 
         if score >= 90:
             prefix, grad = "🔥 ", "linear-gradient(90deg,#ff4b4b,#ff8c42)"
@@ -851,7 +892,7 @@ with aba_leads:
             prefix, grad = "", "linear-gradient(90deg,#546e7a,#78909c)"
 
         score_html = (
-            f'<div class="score-bar-outer">'
+            f'<div class="score-bar-outer" title="Raw: {raw_score} pts · Relativo no ranking: {score}%">'
             f'<div class="score-bar-fill" style="background:{grad};width:{score}%;"></div>'
             f'<div class="score-bar-label">{prefix}{score}%</div>'
             f'</div>'
