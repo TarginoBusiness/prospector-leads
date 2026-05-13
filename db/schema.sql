@@ -38,8 +38,11 @@ CREATE TABLE IF NOT EXISTS leads (
     first_seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_contacted_at TIMESTAMPTZ,
+    last_deep_dive_at TIMESTAMPTZ,                -- ultima vez que rodou OSINT profundo
     notes             TEXT
 );
+-- Coluna nova (idempotente) — ALTER em vez de DROP/CREATE
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_deep_dive_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_leads_score   ON leads(score_temperatura DESC);
 CREATE INDEX IF NOT EXISTS idx_leads_cidade  ON leads(cidade_tag);
 CREATE INDEX IF NOT EXISTS idx_leads_nicho   ON leads(nicho);

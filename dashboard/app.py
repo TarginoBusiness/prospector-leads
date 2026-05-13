@@ -101,12 +101,24 @@ def load_leads_compact() -> pd.DataFrame:
 def load_leads_full() -> pd.DataFrame:
     """Versao completa pra tabela principal — cache maior pq nao precisa live."""
     sql = """
-        SELECT id, source, source_url, nome, telefone, email, cnpj,
-               nicho, cidade_tag, cidade, estado,
-               score_temperatura, score_breakdown,
-               status, first_seen_at, last_seen_at, last_contacted_at, notes
-        FROM leads
-        ORDER BY score_temperatura DESC, last_seen_at DESC
+        SELECT
+            l.id, l.source, l.source_url, l.nome, l.telefone, l.email, l.cnpj,
+            l.nicho, l.cidade_tag, l.cidade, l.estado,
+            l.score_temperatura, l.score_breakdown,
+            l.status, l.first_seen_at, l.last_seen_at, l.last_contacted_at,
+            l.last_deep_dive_at, l.notes,
+            COALESCE(s.interest_count, 0) AS interest_count,
+            s.interest_categorias
+        FROM leads l
+        LEFT JOIN (
+            SELECT lead_id,
+                   COUNT(*) AS interest_count,
+                   STRING_AGG(DISTINCT REPLACE(categoria, 'interest_', ''), ', ') AS interest_categorias
+            FROM intent_signals
+            WHERE categoria LIKE 'interest_%'
+            GROUP BY lead_id
+        ) s ON s.lead_id = l.id
+        ORDER BY l.score_temperatura DESC, l.last_seen_at DESC
     """
     with get_conn() as c, c.cursor() as cur:
         cur.execute(sql)
@@ -289,12 +301,17 @@ st.caption("Painel ao vivo (atualiza silenciosamente a cada 5s). Filtros e tabel
 aba_leads, aba_dossie, aba_saude = st.tabs(["📋 Leads", "🕵️ Dossiê OSINT", "🩺 Saúde dos scrapers"])
 
 with aba_leads:
-    # ====== Botao unico de buscar leads ======
-    btn_col, _ = st.columns([1, 3])
-    with btn_col:
+    # ====== Botoes de acao ======
+    btn1, btn2, _ = st.columns([1, 1, 2])
+    with btn1:
         if st.button("🚀 Buscar +100 leads", use_container_width=True, type="primary"):
             ok, msg = trigger_workflow("scrape-gmaps.yml", {"limit": "100"})
             st.session_state["last_trigger_msg"] = (ok, msg, "scrape-gmaps.yml", time.time())
+
+    with btn2:
+        if st.button("🔍 Aprofundar OSINT", use_container_width=True, help="Aprofunda todos os leads não verificados nos últimos 7 dias, buscando sinais de interesse em IA/automação/dev."):
+            ok, msg = trigger_workflow("deep-osint.yml", {"limit": "1000"})
+            st.session_state["last_trigger_msg"] = (ok, msg, "deep-osint.yml", time.time())
 
     if "last_trigger_msg" in st.session_state:
         ok, msg, wf, when = st.session_state["last_trigger_msg"]
@@ -316,7 +333,7 @@ with aba_leads:
     if df.empty:
         st.stop()
 
-    fc1, fc2, fc3, fc4, fc5 = st.columns([2, 2, 2, 1, 1])
+    fc1, fc2, fc3, fc4, fc5, fc6 = st.columns([2, 2, 2, 1, 1, 1])
     score_min = fc1.slider("Score mínimo (%)", 0, 100, 50, step=5)
     cidades_disp = ["(todas)"] + sorted([c for c in df["cidade_tag"].dropna().unique()])
     cidade_sel = fc2.multiselect("Cidade", cidades_disp, default=["(todas)"])
@@ -324,6 +341,7 @@ with aba_leads:
     nicho_sel = fc3.multiselect("Nicho", nichos_disp, default=["(todos)"])
     status_sel = fc4.selectbox("Status", ["todos", "novo", "contatado", "respondeu", "fechou", "descartado"])
     so_com_tel = fc5.checkbox("📱 Só com telefone", value=False)
+    so_com_sinal = fc6.checkbox("🎯 Só com sinal", value=False, help="Só leads que têm ao menos 1 sinal de interesse detectado")
 
     flt = df["score_temperatura"] >= score_min
     if "(todas)" not in cidade_sel and cidade_sel:
@@ -334,6 +352,8 @@ with aba_leads:
         flt &= df["status"] == status_sel
     if so_com_tel:
         flt &= df["telefone"].notna()
+    if so_com_sinal:
+        flt &= df["interest_count"] > 0
 
     df_f = df[flt].copy()
 
@@ -352,9 +372,10 @@ with aba_leads:
         st.rerun()
 
     show_cols = [
-        "score_temperatura", "cidade_tag", "nicho", "source",
+        "score_temperatura", "interest_count", "interest_categorias",
+        "cidade_tag", "nicho", "source",
         "nome", "telefone", "whatsapp_link", "email", "status",
-        "source_url", "first_seen_at", "last_seen_at",
+        "source_url", "first_seen_at", "last_deep_dive_at",
     ]
     st.dataframe(
         df_f[show_cols],
@@ -364,10 +385,12 @@ with aba_leads:
             "score_temperatura": st.column_config.ProgressColumn(
                 "Score 🔥", min_value=0, max_value=100, format="%d%%"
             ),
+            "interest_count": st.column_config.NumberColumn("Sinais 🎯", help="Quantos sinais de interesse detectados via deep OSINT"),
+            "interest_categorias": st.column_config.TextColumn("Tipos de sinal", help="Categorias: ia_mencao, automacao, whatsapp_automation, vaga_tech, etc"),
             "source_url": st.column_config.LinkColumn("Origem"),
             "whatsapp_link": st.column_config.LinkColumn("WhatsApp 📱", display_text="Abrir"),
             "first_seen_at": st.column_config.DatetimeColumn("Visto 1a vez"),
-            "last_seen_at": st.column_config.DatetimeColumn("Atualizado"),
+            "last_deep_dive_at": st.column_config.DatetimeColumn("OSINT em"),
         },
     )
 
