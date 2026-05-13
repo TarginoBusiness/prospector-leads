@@ -4,11 +4,15 @@ on:
   schedule:
     - cron: "0 5 * * *"   # 1x/dia as 5h UTC (2h Brasilia)
   workflow_dispatch:
+    inputs:
+      limit:
+        description: "Limite de leads novos (0 = varredura completa)"
+        default: "100"
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 120   # varredura larga = lenta
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,4 +24,5 @@ jobs:
       - env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APP_ENV: prod
+          LEADS_LIMIT: ${{ github.event.inputs.limit || '0' }}
         run: python -m scrapers.gmaps

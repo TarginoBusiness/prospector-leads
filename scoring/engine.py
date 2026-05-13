@@ -132,6 +132,13 @@ def calcular(
     total = sum(breakdown.values())
     score = max(0, min(100, total))
 
+    # ====== REGRA DURA: sem telefone = lead FRIO ======
+    # Sem forma de contato direto, nao adianta o quanto a empresa parece quente.
+    # Score capa em 25% pra esses (impossivel virar verde no dashboard).
+    if not has_telefone:
+        score = min(score, 25)
+        breakdown["__cap_sem_telefone__"] = -1  # marca pro audit
+
     return ScoreResult(
         score=score,
         breakdown=breakdown,

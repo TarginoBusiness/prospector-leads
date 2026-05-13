@@ -40,7 +40,7 @@ GH_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GH_REPO = "TarginoBusiness/prospector-leads"
 
 
-# CSS pra flash amarelo nos leads recém-chegados
+# CSS pra flash amarelo + esconder TODOS os indicadores de "Running..."
 st.markdown(
     """
     <style>
@@ -57,8 +57,22 @@ st.markdown(
         border-radius: 6px;
         animation: flash-yellow 3s ease-out;
     }
-    /* esconde o status indicator "Running..." pra ficar mais silencioso */
-    div[data-testid="stStatusWidget"] { display: none; }
+    /* Esconde todos os indicadores Streamlit de execucao em andamento */
+    div[data-testid="stStatusWidget"],
+    div[data-testid="stDecoration"],
+    div[data-testid="stToolbar"],
+    .stSpinner,
+    [data-testid="stHeader"] [data-testid="stStatusWidget"],
+    [class*="StatusWidget"],
+    [class*="status-widget"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    /* Some o header inteiro */
+    header[data-testid="stHeader"] {
+        background: transparent;
+        height: 0 !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -67,7 +81,7 @@ st.markdown(
 
 # ============== Data loaders ==============
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=5, show_spinner=False)
 def load_leads_compact() -> pd.DataFrame:
     """Versao reduzida pro live panel — so o que ele mostra."""
     sql = """
@@ -83,7 +97,7 @@ def load_leads_compact() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_leads_full() -> pd.DataFrame:
     """Versao completa pra tabela principal — cache maior pq nao precisa live."""
     sql = """
@@ -101,7 +115,7 @@ def load_leads_full() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_social_profiles() -> pd.DataFrame:
     sql = """
         SELECT lead_id, plataforma, url, fonte, confianca, discovered_at
@@ -114,7 +128,7 @@ def load_social_profiles() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=10, show_spinner=False)
 def load_runs() -> pd.DataFrame:
     sql = """
         SELECT id, source, started_at, ended_at,
@@ -128,7 +142,7 @@ def load_runs() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=5, show_spinner=False)
 def load_active_run() -> dict | None:
     sql = """
         SELECT id, source, started_at, pages_ok, pages_failed, leads_new, leads_updated
@@ -167,7 +181,7 @@ def trigger_workflow(workflow_file: str, inputs: dict | None = None) -> tuple[bo
         return False, f"Erro: {e}"
 
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=10, show_spinner=False)
 def get_latest_workflow_run(workflow_file: str) -> dict | None:
     if not GH_TOKEN:
         return None
@@ -188,7 +202,7 @@ def get_latest_workflow_run(workflow_file: str) -> dict | None:
 
 # ============== LIVE FRAGMENT (atualiza sozinho a cada 5s) ==============
 
-@st.fragment(run_every=5)
+@st.fragment(run_every=10)
 def painel_ao_vivo():
     """
     Atualiza sozinho a cada 5s SEM rerodar a pagina inteira.
@@ -275,24 +289,12 @@ st.caption("Painel ao vivo (atualiza silenciosamente a cada 5s). Filtros e tabel
 aba_leads, aba_dossie, aba_saude = st.tabs(["📋 Leads", "🕵️ Dossiê OSINT", "🩺 Saúde dos scrapers"])
 
 with aba_leads:
-    # ====== Controle de scrapers (FORA do fragment — só dispara quando clica) ======
-    st.subheader("🎮 Controle de scrapers")
-    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
-
-    with ctrl_col1:
-        if st.button("🚀 Buscar mais leads (GMaps)", use_container_width=True, type="primary"):
-            ok, msg = trigger_workflow("scrape-gmaps.yml")
+    # ====== Botao unico de buscar leads ======
+    btn_col, _ = st.columns([1, 3])
+    with btn_col:
+        if st.button("🚀 Buscar +100 leads", use_container_width=True, type="primary"):
+            ok, msg = trigger_workflow("scrape-gmaps.yml", {"limit": "100"})
             st.session_state["last_trigger_msg"] = (ok, msg, "scrape-gmaps.yml", time.time())
-
-    with ctrl_col2:
-        if st.button("📞 Enriquecer +100 leads", use_container_width=True):
-            ok, msg = trigger_workflow("enrich-gmaps.yml", {"limit": "100"})
-            st.session_state["last_trigger_msg"] = (ok, msg, "enrich-gmaps.yml", time.time())
-
-    with ctrl_col3:
-        if st.button("🕵️ Workana (intent quente)", use_container_width=True):
-            ok, msg = trigger_workflow("scrape-workana.yml")
-            st.session_state["last_trigger_msg"] = (ok, msg, "scrape-workana.yml", time.time())
 
     if "last_trigger_msg" in st.session_state:
         ok, msg, wf, when = st.session_state["last_trigger_msg"]

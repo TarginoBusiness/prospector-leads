@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from urllib.parse import quote
@@ -243,6 +244,10 @@ async def main() -> None:
         )
         page = await context.new_page()
 
+        leads_limit = int(os.environ.get("LEADS_LIMIT", "0"))
+        if leads_limit:
+            log.info(f"LEADS_LIMIT={leads_limit}, paro quando atingir esse numero de leads NOVOS")
+
         try:
             for q, nicho_key, cidade_tag in queries:
                 try:
@@ -253,6 +258,9 @@ async def main() -> None:
                 except Exception as e:
                     log.exception(f"falhou query '{q}': {e}")
                     fail += 1
+                if leads_limit and leads_new >= leads_limit:
+                    log.info(f"Atingiu LEADS_LIMIT={leads_limit}. Parando.")
+                    break
                 await human_delay(3, 8)  # delay maior contra rate limit Google
         except Exception as e:
             err = str(e)
