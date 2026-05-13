@@ -741,66 +741,55 @@ with aba_leads:
         load_leads_full.clear()
         st.rerun()
 
-    st.caption("👇 Selecione uma linha da tabela, depois clique no botão pra abrir a ficha completa.")
+    # Paginacao: 25 leads por pagina
+    PAGE_SIZE = 25
+    total_pages = max(1, (len(df_f) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page_col1, page_col2 = st.columns([1, 5])
+    with page_col1:
+        current_page = st.number_input(
+            "Página", min_value=1, max_value=total_pages, value=1, step=1, key="leads_page"
+        )
+    with page_col2:
+        st.caption(f"Mostrando página {current_page} de {total_pages} ({len(df_f)} leads no filtro). Cada linha tem botão 📋 pra abrir a ficha completa.")
 
-    show_cols = [
-        "id", "score_temperatura", "interest_count", "interest_categorias",
-        "cidade_tag", "nicho", "source",
-        "nome", "telefone", "whatsapp_link", "email", "status",
-        "source_url", "first_seen_at", "last_deep_dive_at",
-    ]
-    event = st.dataframe(
-        df_f[show_cols],
-        use_container_width=True,
-        hide_index=True,
-        selection_mode="single-row",
-        on_select="rerun",
-        key="leads_table",
-        column_config={
-            "id": st.column_config.NumberColumn("#", width="small"),
-            "score_temperatura": st.column_config.ProgressColumn(
-                "Score 🔥", min_value=0, max_value=100, format="%d%%"
-            ),
-            "interest_count": st.column_config.NumberColumn("Sinais 🎯", help="Quantos sinais de interesse detectados via deep OSINT"),
-            "interest_categorias": st.column_config.TextColumn("Tipos de sinal", help="Categorias: ia_mencao, automacao, whatsapp_automation, vaga_tech, etc"),
-            "source_url": st.column_config.LinkColumn("Origem"),
-            "whatsapp_link": st.column_config.LinkColumn("WhatsApp 📱", display_text="Abrir"),
-            "first_seen_at": st.column_config.DatetimeColumn("Visto 1a vez"),
-            "last_deep_dive_at": st.column_config.DatetimeColumn("OSINT em"),
-        },
-    )
+    start_idx = (current_page - 1) * PAGE_SIZE
+    df_page = df_f.iloc[start_idx:start_idx + PAGE_SIZE]
 
-    # Botão real pra abrir a ficha (depois de selecionar linha)
-    selected_rows = event.selection.rows if event and event.selection else []
-    btn_col1, btn_col2 = st.columns([2, 5])
-    with btn_col1:
-        if selected_rows:
-            idx = selected_rows[0]
-            lead_id_clicked = int(df_f.iloc[idx]["id"])
-            nome_clicked = df_f.iloc[idx]["nome"] or "(sem nome)"
-            score_clicked = int(df_f.iloc[idx]["score_temperatura"])
-            if st.button(
-                f"📋 Abrir Ficha Completa",
-                type="primary",
-                use_container_width=True,
-                key="btn_open_ficha",
-            ):
-                show_lead_dialog(lead_id_clicked)
+    # Cabecalho da tabela manual
+    h = st.columns([0.5, 1, 0.7, 1, 1.2, 2.5, 1.5, 1])
+    h[0].markdown("**📋**")
+    h[1].markdown("**Score 🔥**")
+    h[2].markdown("**Sinais 🎯**")
+    h[3].markdown("**Cidade**")
+    h[4].markdown("**Nicho**")
+    h[5].markdown("**Nome**")
+    h[6].markdown("**Telefone**")
+    h[7].markdown("**Status**")
+    st.divider()
+
+    # Linhas manuais com botão 📋 real em cada uma
+    for _, row in df_page.iterrows():
+        c = st.columns([0.5, 1, 0.7, 1, 1.2, 2.5, 1.5, 1])
+        lead_id_row = int(row["id"])
+        if c[0].button("📋", key=f"open_ficha_{lead_id_row}", help=f"Abrir ficha completa do lead #{lead_id_row}"):
+            show_lead_dialog(lead_id_row)
+
+        score = int(row["score_temperatura"])
+        score_emoji = "🔥" if score >= 75 else "🟡" if score >= 50 else "🧊"
+        c[1].markdown(f"{score_emoji} **{score}%**")
+
+        sinais = int(row.get("interest_count") or 0)
+        c[2].markdown(f"🎯 **{sinais}**" if sinais > 0 else "○ 0")
+        c[3].markdown(f"{row['cidade_tag'] or '—'}")
+        c[4].markdown(f"{row['nicho'] or '—'}")
+        c[5].markdown(f"{row['nome'] or '(sem nome)'}")
+        tel = row["telefone"]
+        if tel and not pd.isna(tel):
+            wa = _wa_url(tel)
+            c[6].markdown(f"[{tel}]({wa})")
         else:
-            st.button(
-                "📋 Abrir Ficha Completa (selecione linha)",
-                disabled=True,
-                use_container_width=True,
-                key="btn_open_ficha_disabled",
-            )
-
-    with btn_col2:
-        if selected_rows:
-            idx = selected_rows[0]
-            nome_clicked = df_f.iloc[idx]["nome"] or "(sem nome)"
-            score_clicked = int(df_f.iloc[idx]["score_temperatura"])
-            score_emoji = "🔥" if score_clicked >= 75 else "🟡" if score_clicked >= 50 else "🧊"
-            st.markdown(f"**Selecionado:** {score_emoji} {nome_clicked} — {score_clicked}%")
+            c[6].markdown("—")
+        c[7].markdown(f"`{row['status']}`")
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
