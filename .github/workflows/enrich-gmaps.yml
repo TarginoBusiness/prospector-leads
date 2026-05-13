@@ -1,0 +1,27 @@
+name: Enrich GMaps leads (deep, cascata de 6 tecnicas)
+
+on:
+  schedule:
+    - cron: "45 */2 * * *"   # a cada 2h, 45min depois
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Quantos leads enriquecer"
+        default: "50"
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install --upgrade pip && pip install -r requirements-scrapers.txt
+      - run: playwright install --with-deps chromium
+      - env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APP_ENV: prod
+        run: python -m enrichers.enrich_gmaps ${{ github.event.inputs.limit || '50' }}
