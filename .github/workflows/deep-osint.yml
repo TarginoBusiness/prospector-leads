@@ -23,4 +23,4 @@ jobs:
       - env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APP_ENV: prod
-        run: python -m enrichers.run_deep_osint ${{ github.event.inputs.limit || '1000' }}
+        run: python -m enrichers.run_deep_osint_v2 ${{ github.event.inputs.limit || '1000' }}

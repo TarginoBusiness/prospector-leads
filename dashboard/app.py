@@ -288,6 +288,50 @@ def show_lead_dialog(lead_id: int) -> None:
 
     st.divider()
 
+    # Quadro societario (do CNPJ via BrasilAPI)
+    rp_for_socios = lead.get("raw_payload") or {}
+    if isinstance(rp_for_socios, str):
+        try:
+            rp_for_socios = json.loads(rp_for_socios)
+        except Exception:
+            rp_for_socios = {}
+    cnpj_data = (rp_for_socios.get("deep_osint_v2") or {}).get("cnpj_data") or {}
+    if cnpj_data and cnpj_data.get("socios"):
+        st.markdown("#### 👥 Quadro societário (Receita Federal via BrasilAPI)")
+        st.caption(
+            f"**{cnpj_data.get('razao_social') or '—'}** ({cnpj_data.get('nome_fantasia') or 'sem fantasia'}) · "
+            f"CNAE: {cnpj_data.get('cnae_principal') or '—'} · "
+            f"Porte: {cnpj_data.get('porte') or '—'}"
+        )
+        for s in cnpj_data["socios"]:
+            st.markdown(
+                f"- **{s['nome']}** — {s['qualificacao']} (desde {s['data_entrada'] or '—'})"
+            )
+
+    # Reclame Aqui (pain points)
+    reclame = (rp_for_socios.get("deep_osint_v2") or {}).get("reclame_aqui") or {}
+    if reclame.get("n_resultados"):
+        st.markdown("#### 😡 Reclame Aqui (pain points)")
+        st.warning(
+            f"**{reclame['n_resultados']} reclamações encontradas** — pista forte de que precisa de automação."
+        )
+        for u in reclame.get("urls_top3", []):
+            st.markdown(f"- [{u}]({u})")
+
+    # News mentions
+    news = (rp_for_socios.get("deep_osint_v2") or {}).get("news_mentions") or {}
+    if news.get("n_urls"):
+        st.markdown("#### 📰 Menções em portais de notícia")
+        for u in news.get("urls_top5", []):
+            st.markdown(f"- [{u}]({u})")
+
+    # Reverse phone (pra confirmar identidade)
+    rev = (rp_for_socios.get("deep_osint_v2") or {}).get("reverse_phone") or {}
+    if rev.get("nomes_encontrados"):
+        st.markdown("#### 📞 Quem mais usa esse telefone? (reverse lookup)")
+        for nome_alt in rev["nomes_encontrados"]:
+            st.markdown(f"- {nome_alt}")
+
     # Raw payload (para auditoria)
     with st.expander("🔍 Dados brutos coletados (raw_payload)"):
         rp = lead.get("raw_payload") or {}
@@ -510,25 +554,27 @@ def painel_ao_vivo():
         elapsed = (datetime.now(timezone.utc) - active["started_at"]).total_seconds()
         # ETA em segundos por source
         eta_map = {
-            "gmaps":        2700,   # ~45min
-            "workana":       180,
-            "99freelas":     180,
-            "enrich_gmaps":  600,   # 100 leads × 6s
-            "deep_osint":   1200,   # 100 leads × 12s (5 fontes por lead)
+            "gmaps":          2700,   # ~45min
+            "workana":         180,
+            "99freelas":       180,
+            "enrich_gmaps":    600,   # 100 leads × 6s
+            "deep_osint":     1200,   # 100 leads × 12s
+            "deep_osint_v2":  1800,   # 100 leads × 18s (mais fontes)
         }
         labels = {
-            "gmaps":        ("🗺️", "Buscando empresas no Google Maps"),
-            "workana":      ("🕵️", "Caçando intent quente no Workana"),
-            "99freelas":    ("💼", "Caçando intent no 99Freelas"),
-            "enrich_gmaps": ("📞", "Enriquecendo leads com cascata de técnicas"),
-            "deep_osint":   ("🔍", "Aprofundando OSINT (sinais de interesse)"),
+            "gmaps":          ("🗺️", "Buscando empresas no Google Maps"),
+            "workana":        ("🕵️", "Caçando intent quente no Workana"),
+            "99freelas":      ("💼", "Caçando intent no 99Freelas"),
+            "enrich_gmaps":   ("📞", "Enriquecendo leads com cascata de técnicas"),
+            "deep_osint":     ("🔍", "Aprofundando OSINT (sinais de interesse)"),
+            "deep_osint_v2":  ("🕵️‍♀️", "Aprofundando OSINT v2 (8 fontes + perfis sociais + CNPJ)"),
         }
         eta = eta_map.get(active["source"], 600)
         emoji, descricao = labels.get(active["source"], ("⏳", active["source"]))
         progress = min(elapsed / eta, 0.97)
 
         # Sub-texto adaptado pra cada tipo
-        if active["source"] == "deep_osint":
+        if active["source"] in ("deep_osint", "deep_osint_v2"):
             sub = (
                 f"⏱️ {int(elapsed)}s · "
                 f"🎯 {active['leads_new']} c/ sinais · "
