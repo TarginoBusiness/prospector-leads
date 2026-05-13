@@ -67,29 +67,22 @@ async def scrape_search(page, query: str) -> list[dict]:
     html = await page.content()
     repo.insert_raw_page(SOURCE, url, html)
 
-    # Debug: pega TODOS os hrefs pra entender o padrao do Workana hoje
-    all_hrefs = await page.eval_on_selector_all(
-        ".project-item a, [class*='project'] a",
-        "elements => Array.from(new Set(elements.map(e => e.getAttribute('href')))).slice(0, 10)",
-    )
-    log.info(f"[{query}] amostra de hrefs dentro de project-item: {all_hrefs}")
-
-    # Pega titulos diretos dos cards (mais robusto que adivinhar URL)
+    # Extrai cards .project-item. Workana usa URLs /job/<slug> (singular).
+    # JS abaixo usa aspas duplas externas e simples internas pra evitar conflito.
     cards_data = await page.eval_on_selector_all(
         ".project-item",
-        """elements => elements.map(card => {
-            const titleEl = card.querySelector('h1, h2, h3, .title, [class*='title'], a');
-            const descEl = card.querySelector('[class*='description'], p, .body, .excerpt');
-            const linkEl = card.querySelector('a[href]');
+        """(elements) => elements.map(card => {
+            const titleLink = card.querySelector("a[href*='/job/']");
+            const descEl = card.querySelector(".project-details, .description, .body, p");
             return {
-                titulo: titleEl ? titleEl.textContent.trim() : '',
-                descricao: descEl ? descEl.textContent.trim() : '',
-                href: linkEl ? linkEl.getAttribute('href') : ''
+                titulo: titleLink ? (titleLink.textContent || '').trim() : '',
+                descricao: descEl ? (descEl.textContent || '').trim() : '',
+                href: titleLink ? titleLink.getAttribute('href') : ''
             };
-        })""",
+        }).filter(c => c.titulo && c.href)""",
     )
 
-    log.info(f"[{query}] {len(cards_data)} cards .project-item encontrados")
+    log.info(f"[{query}] {len(cards_data)} cards extraidos com titulo+href")
 
     projetos = []
     for c in cards_data[:20]:
