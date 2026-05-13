@@ -1,0 +1,27 @@
+name: Enrich leads (busca telefone/email/CNPJ)
+
+on:
+  schedule:
+    - cron: "15 */1 * * *"   # 15min depois do scraper de Workana
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Quantos leads enriquecer (default 30)"
+        default: "30"
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install --upgrade pip && pip install -r requirements-scrapers.txt
+      - run: playwright install --with-deps chromium
+      - env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APP_ENV: prod
+        run: python -m enrichers.pipeline ${{ github.event.inputs.limit || '30' }}

@@ -77,22 +77,24 @@ with aba_leads:
         st.info("Nenhum lead ainda. Rode um scraper: `python -m scrapers.workana`")
         st.stop()
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total de leads", len(df))
-    col2.metric("Score medio", f"{df['score_temperatura'].mean():.0f}")
-    col3.metric("Leads quentes (>=60%)", int((df["score_temperatura"] >= 60).sum()))
-    col4.metric("Leads novos hoje", int((df["first_seen_at"].dt.date == pd.Timestamp.now(tz="UTC").date()).sum()))
+    col2.metric("Score médio", f"{df['score_temperatura'].mean():.0f}")
+    col3.metric("Quentes (≥60%)", int((df["score_temperatura"] >= 60).sum()))
+    col4.metric("Com telefone 📱", int(df["telefone"].notna().sum()))
+    col5.metric("Novos hoje", int((df["first_seen_at"].dt.date == pd.Timestamp.now(tz="UTC").date()).sum()))
 
     st.divider()
 
     # Filtros
-    fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 1])
+    fc1, fc2, fc3, fc4, fc5 = st.columns([2, 2, 2, 1, 1])
     score_min = fc1.slider("Score mínimo (%)", 0, 100, 50, step=5)
     cidades_disp = ["(todas)"] + sorted([c for c in df["cidade_tag"].dropna().unique()])
     cidade_sel = fc2.multiselect("Cidade", cidades_disp, default=["(todas)"])
     nichos_disp = ["(todos)"] + sorted([n for n in df["nicho"].dropna().unique()])
     nicho_sel = fc3.multiselect("Nicho", nichos_disp, default=["(todos)"])
     status_sel = fc4.selectbox("Status", ["todos", "novo", "contatado", "respondeu", "fechou", "descartado"])
+    so_com_tel = fc5.checkbox("📱 Só com telefone", value=False)
 
     flt = df["score_temperatura"] >= score_min
     if "(todas)" not in cidade_sel and cidade_sel:
@@ -101,14 +103,26 @@ with aba_leads:
         flt &= df["nicho"].isin(nicho_sel)
     if status_sel != "todos":
         flt &= df["status"] == status_sel
+    if so_com_tel:
+        flt &= df["telefone"].notna()
 
     df_f = df[flt].copy()
+
+    # Cria coluna de link WhatsApp clicavel se tem telefone
+    def _wa_link(tel):
+        if pd.isna(tel) or not tel:
+            return None
+        clean = "".join(c for c in str(tel) if c.isdigit() or c == "+")
+        return f"https://wa.me/{clean.lstrip('+')}"
+
+    df_f["whatsapp_link"] = df_f["telefone"].apply(_wa_link)
+
     st.write(f"**{len(df_f)}** leads no filtro.")
 
     # Tabela
     show_cols = [
         "score_temperatura", "cidade_tag", "nicho", "source",
-        "nome", "telefone", "email", "status",
+        "nome", "telefone", "whatsapp_link", "email", "status",
         "source_url", "first_seen_at", "last_seen_at",
     ]
     st.dataframe(
@@ -120,6 +134,7 @@ with aba_leads:
                 "Score 🔥", min_value=0, max_value=100, format="%d%%"
             ),
             "source_url": st.column_config.LinkColumn("Origem"),
+            "whatsapp_link": st.column_config.LinkColumn("WhatsApp 📱", display_text="Abrir"),
             "first_seen_at": st.column_config.DatetimeColumn("Visto 1a vez"),
             "last_seen_at": st.column_config.DatetimeColumn("Atualizado"),
         },
