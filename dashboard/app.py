@@ -774,26 +774,14 @@ with aba_leads:
         load_leads_full.clear()
         st.rerun()
 
-    # Paginacao: 25 leads por pagina
-    PAGE_SIZE = 25
-    total_pages = max(1, (len(df_f) + PAGE_SIZE - 1) // PAGE_SIZE)
-    page_col1, page_col2 = st.columns([1, 5])
-    with page_col1:
-        current_page = st.number_input(
-            "Página", min_value=1, max_value=total_pages, value=1, step=1, key="leads_page"
-        )
-    with page_col2:
-        st.caption(f"Mostrando página {current_page} de {total_pages} ({len(df_f)} leads no filtro). Cada linha tem botão 📋 pra abrir a ficha completa.")
-
-    start_idx = (current_page - 1) * PAGE_SIZE
-    df_page = df_f.iloc[start_idx:start_idx + PAGE_SIZE]
+    st.caption(f"📊 **{len(df_f)} leads** no filtro · Use a barra de rolagem da tabela pra navegar.")
 
     # Marcador que ativa o CSS de tabela compacta a partir daqui
     st.markdown('<div class="leads-table-start"></div>', unsafe_allow_html=True)
 
     COL_WIDTHS = [0.4, 1.3, 1.5, 0.9, 1.1, 2.0, 1.5, 1.4]
 
-    # Cabeçalho com fundo destacado
+    # Cabeçalho FORA do container scrollável (fica fixo no topo)
     h = st.columns(COL_WIDTHS)
     headers = ["📋", "Score 🔥", "Sinais 🎯", "Cidade", "Nicho", "Nome", "Telefone", "Responsável"]
     for col, label in zip(h, headers):
@@ -802,64 +790,65 @@ with aba_leads:
             unsafe_allow_html=True,
         )
 
-    # Linhas
-    for _, row in df_page.iterrows():
-        c = st.columns(COL_WIDTHS)
-        lead_id_row = int(row["id"])
+    # Container com altura fixa e scroll — TODAS as linhas dentro
+    with st.container(height=650, border=False):
+        for _, row in df_f.iterrows():
+            c = st.columns(COL_WIDTHS)
+            lead_id_row = int(row["id"])
 
-        if c[0].button("📋", key=f"open_ficha_{lead_id_row}", help=f"Abrir ficha completa do lead #{lead_id_row}"):
-            show_lead_dialog(lead_id_row)
+            if c[0].button("📋", key=f"open_ficha_{lead_id_row}", help=f"Abrir ficha completa do lead #{lead_id_row}"):
+                show_lead_dialog(lead_id_row)
 
-        # Score com progress bar
-        score = int(row["score_temperatura"])
-        if score >= 90:
-            score_prefix = "🔥 "
-            grad = "linear-gradient(90deg,#ff4b4b,#ff8c42)"
-        elif score >= 60:
-            score_prefix = ""
-            grad = "linear-gradient(90deg,#ff8c42,#ffa726)"
-        elif score >= 30:
-            score_prefix = ""
-            grad = "linear-gradient(90deg,#fbc02d,#fdd835)"
-        else:
-            score_prefix = ""
-            grad = "linear-gradient(90deg,#546e7a,#78909c)"
-        c[1].markdown(
-            f"""<div style="background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;">
-              <div style="background:{grad};height:100%;width:{score}%;"></div>
-              <div style="position:absolute;top:0;left:0;right:0;text-align:center;line-height:18px;font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.7);">{score_prefix}{score}%</div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-
-        # Sinais com categorias em fonte menor
-        sinais = int(row.get("interest_count") or 0)
-        cats = row.get("interest_categorias")
-        if sinais > 0:
-            cats_str = f"<div style='color:#888;font-size:10px;line-height:1.2;margin-top:2px;'>({cats})</div>" if cats else ""
-            c[2].markdown(
-                f"<span style='color:#4caf50;font-weight:600;'>🎯 {sinais}</span>{cats_str}",
+            # Score com progress bar
+            score = int(row["score_temperatura"])
+            if score >= 90:
+                score_prefix = "🔥 "
+                grad = "linear-gradient(90deg,#ff4b4b,#ff8c42)"
+            elif score >= 60:
+                score_prefix = ""
+                grad = "linear-gradient(90deg,#ff8c42,#ffa726)"
+            elif score >= 30:
+                score_prefix = ""
+                grad = "linear-gradient(90deg,#fbc02d,#fdd835)"
+            else:
+                score_prefix = ""
+                grad = "linear-gradient(90deg,#546e7a,#78909c)"
+            c[1].markdown(
+                f"""<div style="background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;">
+                  <div style="background:{grad};height:100%;width:{score}%;"></div>
+                  <div style="position:absolute;top:0;left:0;right:0;text-align:center;line-height:18px;font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.7);">{score_prefix}{score}%</div>
+                </div>""",
                 unsafe_allow_html=True,
             )
-        else:
-            c[2].markdown("<span style='color:#555;'>○ 0</span>", unsafe_allow_html=True)
 
-        c[3].markdown(f"{row['cidade_tag'] or '—'}")
-        c[4].markdown(f"<span style='font-size:11px;'>{row['nicho'] or '—'}</span>", unsafe_allow_html=True)
-        c[5].markdown(f"<span style='font-weight:500;'>{row['nome'] or '(sem nome)'}</span>", unsafe_allow_html=True)
+            # Sinais com categorias em fonte menor
+            sinais = int(row.get("interest_count") or 0)
+            cats = row.get("interest_categorias")
+            if sinais > 0:
+                cats_str = f"<div style='color:#888;font-size:10px;line-height:1.2;margin-top:2px;'>({cats})</div>" if cats else ""
+                c[2].markdown(
+                    f"<span style='color:#4caf50;font-weight:600;'>🎯 {sinais}</span>{cats_str}",
+                    unsafe_allow_html=True,
+                )
+            else:
+                c[2].markdown("<span style='color:#555;'>○ 0</span>", unsafe_allow_html=True)
 
-        tel = row["telefone"]
-        if tel and not pd.isna(tel):
-            wa = _wa_url(tel)
-            c[6].markdown(f"<a href='{wa}' target='_blank' style='color:#4caf50;text-decoration:none;'>{tel}</a>", unsafe_allow_html=True)
-        else:
-            c[6].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
+            c[3].markdown(f"{row['cidade_tag'] or '—'}")
+            c[4].markdown(f"<span style='font-size:11px;'>{row['nicho'] or '—'}</span>", unsafe_allow_html=True)
+            c[5].markdown(f"<span style='font-weight:500;'>{row['nome'] or '(sem nome)'}</span>", unsafe_allow_html=True)
 
-        resp = row.get("responsavel")
-        if resp and not pd.isna(resp):
-            c[7].markdown(f"<span style='font-size:11px;'>{resp}</span>", unsafe_allow_html=True)
-        else:
-            c[7].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
+            tel = row["telefone"]
+            if tel and not pd.isna(tel):
+                wa = _wa_url(tel)
+                c[6].markdown(f"<a href='{wa}' target='_blank' style='color:#4caf50;text-decoration:none;'>{tel}</a>", unsafe_allow_html=True)
+            else:
+                c[6].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
+
+            resp = row.get("responsavel")
+            if resp and not pd.isna(resp):
+                c[7].markdown(f"<span style='font-size:11px;'>{resp}</span>", unsafe_allow_html=True)
+            else:
+                c[7].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
