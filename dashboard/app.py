@@ -146,36 +146,78 @@ st.markdown(
         to   { background-position: 0 0; }
     }
 
-    /* ====== TABELA DE LEADS — visual de tabela real ====== */
-    /* Tudo APOS o marcador .leads-table-start fica estilizado */
-    .leads-table-start ~ div[data-testid="stHorizontalBlock"] {
-        border-bottom: 1px solid #2a2a2a !important;
-        margin: 0 !important;
-        padding: 4px 0 !important;
-        gap: 0 !important;
+    /* ============ TABELA HTML PURA — fluida e leve ============ */
+    .leads-table-container {
+        height: 650px;
+        overflow-y: auto;
+        border: 1px solid #2a2a2a;
+        border-radius: 6px;
+        background: #0e1117;
     }
-    .leads-table-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"] {
-        border-right: 1px solid #3a3a3a !important;
-        padding: 4px 8px !important;
-        font-size: 12px !important;
-        line-height: 1.35 !important;
-        min-width: 0 !important;
+    .leads-html-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
-    .leads-table-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"]:last-child {
-        border-right: none !important;
+    .leads-html-table thead th {
+        position: sticky;
+        top: 0;
+        background: #1a1a1a;
+        color: #aaa;
+        font-size: 10.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        padding: 8px 8px;
+        border-bottom: 2px solid #444;
+        border-right: 1px solid #2a2a2a;
+        text-align: left;
+        z-index: 2;
     }
-    /* Botao da prancheta menor e mais compacto */
-    .leads-table-start ~ div[data-testid="stHorizontalBlock"] button {
-        padding: 2px 6px !important;
-        font-size: 13px !important;
-        min-height: 28px !important;
-        height: 28px !important;
+    .leads-html-table thead th:last-child { border-right: none; }
+    .leads-html-table tbody td {
+        padding: 6px 8px;
+        border-bottom: 1px solid #232323;
+        border-right: 1px solid #232323;
+        vertical-align: middle;
+        color: #e0e0e0;
     }
-    /* Markdown dentro das celulas: zero margem */
-    .leads-table-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"] p {
-        margin: 0 !important;
-        font-size: 12px !important;
+    .leads-html-table tbody td:last-child { border-right: none; }
+    .leads-html-table tbody tr:hover { background: rgba(255, 75, 75, 0.05); }
+    .ficha-btn {
+        display: inline-block;
+        background: #ff4b4b;
+        color: white !important;
+        text-decoration: none !important;
+        padding: 4px 10px;
+        border-radius: 5px;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1;
+        transition: background 0.15s;
     }
+    .ficha-btn:hover { background: #ff8c42; }
+    .score-bar-outer {
+        background: #1a1a1a;
+        border-radius: 4px;
+        height: 18px;
+        position: relative;
+        overflow: hidden;
+        min-width: 80px;
+    }
+    .score-bar-fill { height: 100%; }
+    .score-bar-label {
+        position: absolute; top: 0; left: 0; right: 0;
+        text-align: center; line-height: 18px;
+        font-size: 11px; font-weight: 600; color: #fff;
+        text-shadow: 0 0 3px rgba(0,0,0,0.7);
+    }
+    .sinal-count { color: #4caf50; font-weight: 600; }
+    .sinal-cats { color: #888; font-size: 10px; line-height: 1.2; display: block; margin-top: 2px; }
+    .tel-link { color: #4caf50; text-decoration: none; }
+    .tel-link:hover { text-decoration: underline; }
+    .empty-cell { color: #555; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -774,81 +816,96 @@ with aba_leads:
         load_leads_full.clear()
         st.rerun()
 
-    st.caption(f"📊 **{len(df_f)} leads** no filtro · Use a barra de rolagem da tabela pra navegar.")
+    st.caption(f"📊 **{len(df_f)} leads** no filtro · Tabela com scroll fluido (HTML nativo).")
 
-    # Marcador que ativa o CSS de tabela compacta a partir daqui
-    st.markdown('<div class="leads-table-start"></div>', unsafe_allow_html=True)
+    # Verifica query param "lead_id" — abre ficha se setado (click no botao 📋)
+    qp_lead_id = st.query_params.get("lead_id")
+    if qp_lead_id:
+        try:
+            lead_id_to_open = int(qp_lead_id)
+            # Limpa o param pra nao reabrir em reload futuro
+            del st.query_params["lead_id"]
+            show_lead_dialog(lead_id_to_open)
+        except (ValueError, KeyError):
+            pass
 
-    COL_WIDTHS = [0.4, 1.3, 1.5, 0.9, 1.1, 2.0, 1.5, 1.4]
+    # Gera HTML da tabela em UMA so string (rapido — 1 markdown render)
+    def _esc(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        s = str(v)
+        return s.replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
-    # Cabeçalho FORA do container scrollável (fica fixo no topo)
-    h = st.columns(COL_WIDTHS)
-    headers = ["📋", "Score 🔥", "Sinais 🎯", "Cidade", "Nicho", "Nome", "Telefone", "Responsável"]
-    for col, label in zip(h, headers):
-        col.markdown(
-            f"<div style='font-weight:700;font-size:11px;color:#bbb;text-transform:uppercase;letter-spacing:0.5px;background:#222;padding:6px 8px;margin:-4px -8px;'>{label}</div>",
-            unsafe_allow_html=True,
+    rows_html = []
+    for _, row in df_f.iterrows():
+        lead_id_row = int(row["id"])
+        score = int(row["score_temperatura"])
+
+        if score >= 90:
+            prefix, grad = "🔥 ", "linear-gradient(90deg,#ff4b4b,#ff8c42)"
+        elif score >= 60:
+            prefix, grad = "", "linear-gradient(90deg,#ff8c42,#ffa726)"
+        elif score >= 30:
+            prefix, grad = "", "linear-gradient(90deg,#fbc02d,#fdd835)"
+        else:
+            prefix, grad = "", "linear-gradient(90deg,#546e7a,#78909c)"
+
+        score_html = (
+            f'<div class="score-bar-outer">'
+            f'<div class="score-bar-fill" style="background:{grad};width:{score}%;"></div>'
+            f'<div class="score-bar-label">{prefix}{score}%</div>'
+            f'</div>'
         )
 
-    # Container com altura fixa e scroll — TODAS as linhas dentro
-    with st.container(height=650, border=False):
-        for _, row in df_f.iterrows():
-            c = st.columns(COL_WIDTHS)
-            lead_id_row = int(row["id"])
+        sinais = int(row.get("interest_count") or 0)
+        cats = row.get("interest_categorias")
+        if sinais > 0:
+            cats_part = f'<span class="sinal-cats">({_esc(cats)})</span>' if cats and not pd.isna(cats) else ""
+            sinais_html = f'<span class="sinal-count">🎯 {sinais}</span>{cats_part}'
+        else:
+            sinais_html = '<span class="empty-cell">○ 0</span>'
 
-            if c[0].button("📋", key=f"open_ficha_{lead_id_row}", help=f"Abrir ficha completa do lead #{lead_id_row}"):
-                show_lead_dialog(lead_id_row)
+        tel = row["telefone"]
+        if tel and not pd.isna(tel):
+            wa = _wa_url(tel)
+            tel_html = f'<a href="{wa}" target="_blank" class="tel-link">{_esc(tel)}</a>'
+        else:
+            tel_html = '<span class="empty-cell">—</span>'
 
-            # Score com progress bar
-            score = int(row["score_temperatura"])
-            if score >= 90:
-                score_prefix = "🔥 "
-                grad = "linear-gradient(90deg,#ff4b4b,#ff8c42)"
-            elif score >= 60:
-                score_prefix = ""
-                grad = "linear-gradient(90deg,#ff8c42,#ffa726)"
-            elif score >= 30:
-                score_prefix = ""
-                grad = "linear-gradient(90deg,#fbc02d,#fdd835)"
-            else:
-                score_prefix = ""
-                grad = "linear-gradient(90deg,#546e7a,#78909c)"
-            c[1].markdown(
-                f"""<div style="background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;">
-                  <div style="background:{grad};height:100%;width:{score}%;"></div>
-                  <div style="position:absolute;top:0;left:0;right:0;text-align:center;line-height:18px;font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.7);">{score_prefix}{score}%</div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
+        resp = row.get("responsavel")
+        resp_html = _esc(resp) if resp and not pd.isna(resp) else '<span class="empty-cell">—</span>'
 
-            # Sinais com categorias em fonte menor
-            sinais = int(row.get("interest_count") or 0)
-            cats = row.get("interest_categorias")
-            if sinais > 0:
-                cats_str = f"<div style='color:#888;font-size:10px;line-height:1.2;margin-top:2px;'>({cats})</div>" if cats else ""
-                c[2].markdown(
-                    f"<span style='color:#4caf50;font-weight:600;'>🎯 {sinais}</span>{cats_str}",
-                    unsafe_allow_html=True,
-                )
-            else:
-                c[2].markdown("<span style='color:#555;'>○ 0</span>", unsafe_allow_html=True)
+        rows_html.append(
+            f'<tr>'
+            f'<td><a href="?lead_id={lead_id_row}" class="ficha-btn">📋</a></td>'
+            f'<td>{score_html}</td>'
+            f'<td>{sinais_html}</td>'
+            f'<td>{_esc(row["cidade_tag"]) or "—"}</td>'
+            f'<td style="font-size:11px;">{_esc(row["nicho"]) or "—"}</td>'
+            f'<td><strong>{_esc(row["nome"]) or "(sem nome)"}</strong></td>'
+            f'<td>{tel_html}</td>'
+            f'<td style="font-size:11px;">{resp_html}</td>'
+            f'</tr>'
+        )
 
-            c[3].markdown(f"{row['cidade_tag'] or '—'}")
-            c[4].markdown(f"<span style='font-size:11px;'>{row['nicho'] or '—'}</span>", unsafe_allow_html=True)
-            c[5].markdown(f"<span style='font-weight:500;'>{row['nome'] or '(sem nome)'}</span>", unsafe_allow_html=True)
-
-            tel = row["telefone"]
-            if tel and not pd.isna(tel):
-                wa = _wa_url(tel)
-                c[6].markdown(f"<a href='{wa}' target='_blank' style='color:#4caf50;text-decoration:none;'>{tel}</a>", unsafe_allow_html=True)
-            else:
-                c[6].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
-
-            resp = row.get("responsavel")
-            if resp and not pd.isna(resp):
-                c[7].markdown(f"<span style='font-size:11px;'>{resp}</span>", unsafe_allow_html=True)
-            else:
-                c[7].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
+    table_html = (
+        '<div class="leads-table-container">'
+        '<table class="leads-html-table">'
+        '<thead><tr>'
+        '<th style="width:55px;">📋</th>'
+        '<th style="width:110px;">Score 🔥</th>'
+        '<th style="width:140px;">Sinais 🎯</th>'
+        '<th style="width:90px;">Cidade</th>'
+        '<th style="width:120px;">Nicho</th>'
+        '<th>Nome</th>'
+        '<th style="width:140px;">Telefone</th>'
+        '<th style="width:130px;">Responsável</th>'
+        '</tr></thead>'
+        '<tbody>' + "".join(rows_html) + '</tbody>'
+        '</table>'
+        '</div>'
+    )
+    st.markdown(table_html, unsafe_allow_html=True)
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
