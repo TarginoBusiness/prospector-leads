@@ -314,23 +314,56 @@ def painel_ao_vivo():
     """
     df = load_leads_compact()
 
-    # Barra de progresso APENAS se tem scrape ativo de verdade (filtra stale)
+    # Barra de progresso APENAS se tem scrape/enrich/osint ativo (filtra stale)
     active = load_active_run()
     if active:
         elapsed = (datetime.now(timezone.utc) - active["started_at"]).total_seconds()
-        eta_map = {"gmaps": 2700, "workana": 180, "99freelas": 180}
+        # ETA em segundos por source
+        eta_map = {
+            "gmaps":        2700,   # ~45min
+            "workana":       180,
+            "99freelas":     180,
+            "enrich_gmaps":  600,   # 100 leads × 6s
+            "deep_osint":   1200,   # 100 leads × 12s (5 fontes por lead)
+        }
+        labels = {
+            "gmaps":        ("🗺️", "Buscando empresas no Google Maps"),
+            "workana":      ("🕵️", "Caçando intent quente no Workana"),
+            "99freelas":    ("💼", "Caçando intent no 99Freelas"),
+            "enrich_gmaps": ("📞", "Enriquecendo leads com cascata de técnicas"),
+            "deep_osint":   ("🔍", "Aprofundando OSINT (sinais de interesse)"),
+        }
         eta = eta_map.get(active["source"], 600)
-        progress = min(elapsed / eta, 0.95)
-        source_emoji = {"gmaps": "🗺️", "workana": "🕵️", "99freelas": "💼"}.get(active["source"], "⏳")
-        render_progress_bar(
-            label=f"{source_emoji} {active['source'].upper()} rodando",
-            pct=progress,
-            sub=(
+        emoji, descricao = labels.get(active["source"], ("⏳", active["source"]))
+        progress = min(elapsed / eta, 0.97)
+
+        # Sub-texto adaptado pra cada tipo
+        if active["source"] == "deep_osint":
+            sub = (
+                f"⏱️ {int(elapsed)}s · "
+                f"🎯 {active['leads_new']} c/ sinais · "
+                f"○ {active['leads_updated']} sem sinais · "
+                f"📊 {active['pages_ok']} leads processados"
+            )
+        elif active["source"] == "enrich_gmaps":
+            sub = (
+                f"⏱️ {int(elapsed)}s · "
+                f"📞 {active['leads_new']} com tel · "
+                f"🌐 {active['leads_updated']} parciais · "
+                f"📊 {active['pages_ok']} processados"
+            )
+        else:
+            sub = (
                 f"⏱️ {int(elapsed)}s · "
                 f"✨ {active['leads_new']} novos · "
                 f"🔄 {active['leads_updated']} atualizados · "
-                f"📄 {active['pages_ok']} páginas OK"
-            ),
+                f"📄 {active['pages_ok']} OK"
+            )
+
+        render_progress_bar(
+            label=f"{emoji} {descricao}",
+            pct=progress,
+            sub=sub,
         )
 
     # Detecta leads novos

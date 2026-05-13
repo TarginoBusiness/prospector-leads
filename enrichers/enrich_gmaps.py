@@ -12,6 +12,7 @@ import sys
 
 from playwright.async_api import async_playwright
 
+from db import repo
 from db.connection import get_conn
 from enrichers.gmaps_deep import enriquecer_gmaps_lead
 
@@ -60,6 +61,9 @@ async def main(limit: int = 50) -> None:
     log.info(f"  {len(leads)} leads pra enriquecer")
     if not leads:
         return
+
+    # Registra run pro dashboard mostrar barra de progresso
+    run_id = repo.start_run("enrich_gmaps", metadata={"total_leads": len(leads), "limit": limit})
 
     enriquecidos_com_tel = 0
     enriquecidos_parcial = 0
@@ -135,9 +139,26 @@ async def main(limit: int = 50) -> None:
                     "payload_extra": json.dumps(payload_extra),
                 })
 
+            # Atualiza progresso a cada lead
+            with get_conn() as c, c.cursor() as cur:
+                cur.execute(
+                    "UPDATE scrape_runs SET pages_ok = %s, leads_new = %s, leads_updated = %s "
+                    "WHERE id = %s",
+                    (i, enriquecidos_com_tel, enriquecidos_parcial, run_id),
+                )
+
             await asyncio.sleep(2)
 
         await browser.close()
+
+    # Marca como concluido
+    repo.end_run(
+        run_id,
+        pages_ok=len(leads),
+        pages_failed=0,
+        leads_new=enriquecidos_com_tel,
+        leads_updated=enriquecidos_parcial,
+    )
 
     log.info(
         f"== FIM: {enriquecidos_com_tel} com telefone, "

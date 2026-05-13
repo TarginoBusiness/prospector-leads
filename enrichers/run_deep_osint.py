@@ -20,6 +20,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
+from db import repo
 from db.connection import get_conn
 from enrichers.deep_osint import aprofundar_lead
 
@@ -99,6 +100,9 @@ async def main(limit: int = 1000) -> None:
     if not leads:
         return
 
+    # Registra run pro dashboard mostrar barra de progresso
+    run_id = repo.start_run("deep_osint", metadata={"total_leads": len(leads), "limit": limit})
+
     aprofundados = 0
     com_sinais = 0
     total_sinais = 0
@@ -170,8 +174,25 @@ async def main(limit: int = 1000) -> None:
         else:
             log.info(f"  - sem sinais de interesse detectados")
 
+        # Atualiza progresso (pages_ok = quantos processados) pra dashboard
+        with get_conn() as c, c.cursor() as cur:
+            cur.execute(
+                "UPDATE scrape_runs SET pages_ok = %s, leads_new = %s, leads_updated = %s "
+                "WHERE id = %s",
+                (i, com_sinais, aprofundados - com_sinais, run_id),
+            )
+
         # Cortesia: nao martelar fontes externas
         await asyncio.sleep(1)
+
+    # Marca como concluido
+    repo.end_run(
+        run_id,
+        pages_ok=aprofundados,
+        pages_failed=len(leads) - aprofundados,
+        leads_new=com_sinais,
+        leads_updated=total_sinais,
+    )
 
     log.info(
         f"== FIM: {aprofundados} aprofundados, {com_sinais} com sinais, "
