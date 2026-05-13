@@ -917,9 +917,16 @@ with aba_leads:
         resp = row.get("responsavel")
         resp_html = _esc(resp) if resp and not pd.isna(resp) else '<span class="empty-cell">—</span>'
 
+        # Botao via <form> com target="_top" — funciona sem JS, sem sanitizacao
+        ficha_btn = (
+            f'<form action="" method="get" target="_top" style="display:inline;margin:0;padding:0;">'
+            f'<input type="hidden" name="lead_id" value="{lead_id_row}">'
+            f'<button type="submit" class="ficha-btn">📋</button>'
+            f'</form>'
+        )
         rows_html.append(
             f'<tr>'
-            f'<td><button onclick="openLead({lead_id_row})" class="ficha-btn">📋</button></td>'
+            f'<td>{ficha_btn}</td>'
             f'<td>{score_html}</td>'
             f'<td>{sinais_html}</td>'
             f'<td>{_esc(row["cidade_tag"]) or "—"}</td>'
@@ -930,10 +937,11 @@ with aba_leads:
             f'</tr>'
         )
 
-    # HTML completo com CSS + JS embarcados dentro do iframe (sem sanitizacao Streamlit)
-    table_html = f"""
-    <html>
+    # HTML completo com CSS embarcado dentro do iframe (sem sanitizacao Streamlit)
+    table_html = f"""<!DOCTYPE html>
+    <html lang="pt-BR">
     <head>
+    <meta charset="UTF-8">
     <style>
         * {{ box-sizing: border-box; }}
         body {{ margin: 0; padding: 0; background: #0e1117; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #e0e0e0; }}
@@ -958,12 +966,14 @@ with aba_leads:
         }}
         tbody td:last-child {{ border-right: none; }}
         tbody tr:hover {{ background: rgba(255, 75, 75, 0.05); }}
+        form {{ margin: 0; padding: 0; display: inline; }}
         .ficha-btn {{
             background: #ff4b4b; color: white !important;
             border: none; cursor: pointer;
             padding: 4px 10px; border-radius: 5px;
             font-size: 13px; font-weight: 600; line-height: 1;
             transition: background 0.15s;
+            font-family: inherit;
         }}
         .ficha-btn:hover {{ background: #ff8c42; }}
         .score-bar-outer {{
@@ -1002,17 +1012,6 @@ with aba_leads:
         <tbody>{''.join(rows_html)}</tbody>
       </table>
     </div>
-    <script>
-      function openLead(leadId) {{
-        // Navega o iframe pai (Streamlit app) pra mudar a query param
-        try {{
-          window.parent.location.search = '?lead_id=' + leadId;
-        }} catch (e) {{
-          // Fallback: navega top-level
-          window.top.location.search = '?lead_id=' + leadId;
-        }}
-      }}
-    </script>
     </body>
     </html>
     """
