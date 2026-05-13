@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 from db.connection import get_conn
 
@@ -880,7 +881,7 @@ with aba_leads:
     for _, row in df_f.iterrows():
         lead_id_row = int(row["id"])
         raw_score = int(row["score_temperatura"])
-        score = _score_relativo(raw_score)  # 10-100 baseado no ranking
+        score = _score_relativo(raw_score)
 
         if score >= 90:
             prefix, grad = "🔥 ", "linear-gradient(90deg,#ff4b4b,#ff8c42)"
@@ -892,7 +893,7 @@ with aba_leads:
             prefix, grad = "", "linear-gradient(90deg,#546e7a,#78909c)"
 
         score_html = (
-            f'<div class="score-bar-outer" title="Raw: {raw_score} pts · Relativo no ranking: {score}%">'
+            f'<div class="score-bar-outer" title="Raw: {raw_score} pts · Relativo: {score}%">'
             f'<div class="score-bar-fill" style="background:{grad};width:{score}%;"></div>'
             f'<div class="score-bar-label">{prefix}{score}%</div>'
             f'</div>'
@@ -918,7 +919,7 @@ with aba_leads:
 
         rows_html.append(
             f'<tr>'
-            f'<td><a href="javascript:void(0)" onclick="window.top.location.search=\'?lead_id={lead_id_row}\';return false;" class="ficha-btn">📋</a></td>'
+            f'<td><button onclick="openLead({lead_id_row})" class="ficha-btn">📋</button></td>'
             f'<td>{score_html}</td>'
             f'<td>{sinais_html}</td>'
             f'<td>{_esc(row["cidade_tag"]) or "—"}</td>'
@@ -929,24 +930,94 @@ with aba_leads:
             f'</tr>'
         )
 
-    table_html = (
-        '<div class="leads-table-container">'
-        '<table class="leads-html-table">'
-        '<thead><tr>'
-        '<th style="width:55px;">📋</th>'
-        '<th style="width:110px;">Score 🔥</th>'
-        '<th style="width:140px;">Sinais 🎯</th>'
-        '<th style="width:90px;">Cidade</th>'
-        '<th style="width:120px;">Nicho</th>'
-        '<th>Nome</th>'
-        '<th style="width:140px;">Telefone</th>'
-        '<th style="width:130px;">Responsável</th>'
-        '</tr></thead>'
-        '<tbody>' + "".join(rows_html) + '</tbody>'
-        '</table>'
-        '</div>'
-    )
-    st.markdown(table_html, unsafe_allow_html=True)
+    # HTML completo com CSS + JS embarcados dentro do iframe (sem sanitizacao Streamlit)
+    table_html = f"""
+    <html>
+    <head>
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{ margin: 0; padding: 0; background: #0e1117; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #e0e0e0; }}
+        .leads-table-container {{
+            height: 650px; overflow-y: auto;
+            border: 1px solid #2a2a2a; border-radius: 6px; background: #0e1117;
+        }}
+        table.leads-html-table {{
+            width: 100%; border-collapse: collapse; font-size: 12px;
+        }}
+        thead th {{
+            position: sticky; top: 0; background: #1a1a1a;
+            color: #aaa; font-size: 10.5px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.6px;
+            padding: 8px; border-bottom: 2px solid #444;
+            border-right: 1px solid #2a2a2a; text-align: left; z-index: 2;
+        }}
+        thead th:last-child {{ border-right: none; }}
+        tbody td {{
+            padding: 6px 8px; border-bottom: 1px solid #232323;
+            border-right: 1px solid #232323; vertical-align: middle;
+        }}
+        tbody td:last-child {{ border-right: none; }}
+        tbody tr:hover {{ background: rgba(255, 75, 75, 0.05); }}
+        .ficha-btn {{
+            background: #ff4b4b; color: white !important;
+            border: none; cursor: pointer;
+            padding: 4px 10px; border-radius: 5px;
+            font-size: 13px; font-weight: 600; line-height: 1;
+            transition: background 0.15s;
+        }}
+        .ficha-btn:hover {{ background: #ff8c42; }}
+        .score-bar-outer {{
+            background: #1a1a1a; border-radius: 4px; height: 18px;
+            position: relative; overflow: hidden; min-width: 80px;
+        }}
+        .score-bar-fill {{ height: 100%; }}
+        .score-bar-label {{
+            position: absolute; top: 0; left: 0; right: 0;
+            text-align: center; line-height: 18px;
+            font-size: 11px; font-weight: 600; color: #fff;
+            text-shadow: 0 0 3px rgba(0,0,0,0.7);
+        }}
+        .sinal-count {{ color: #4caf50; font-weight: 600; }}
+        .sinal-cats {{ color: #888; font-size: 10px; line-height: 1.2; display: block; margin-top: 2px; }}
+        .tel-link {{ color: #4caf50; text-decoration: none; }}
+        .tel-link:hover {{ text-decoration: underline; }}
+        .empty-cell {{ color: #555; }}
+    </style>
+    </head>
+    <body>
+    <div class="leads-table-container">
+      <table class="leads-html-table">
+        <thead>
+          <tr>
+            <th style="width:55px;">📋</th>
+            <th style="width:110px;">Score 🔥</th>
+            <th style="width:140px;">Sinais 🎯</th>
+            <th style="width:90px;">Cidade</th>
+            <th style="width:120px;">Nicho</th>
+            <th>Nome</th>
+            <th style="width:140px;">Telefone</th>
+            <th style="width:130px;">Responsável</th>
+          </tr>
+        </thead>
+        <tbody>{''.join(rows_html)}</tbody>
+      </table>
+    </div>
+    <script>
+      function openLead(leadId) {{
+        // Navega o iframe pai (Streamlit app) pra mudar a query param
+        try {{
+          window.parent.location.search = '?lead_id=' + leadId;
+        }} catch (e) {{
+          // Fallback: navega top-level
+          window.top.location.search = '?lead_id=' + leadId;
+        }}
+      }}
+    </script>
+    </body>
+    </html>
+    """
+    # Renderiza dentro de iframe DEDICADO — sem sanitizacao do Streamlit
+    components.html(table_html, height=700, scrolling=False)
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
