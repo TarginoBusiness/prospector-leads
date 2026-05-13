@@ -433,6 +433,8 @@ def load_leads_full() -> pd.DataFrame:
             l.score_temperatura, l.score_breakdown,
             l.status, l.first_seen_at, l.last_seen_at, l.last_contacted_at,
             l.last_deep_dive_at, l.notes,
+            -- Extrai responsavel principal do quadro societario (BrasilAPI via deep_osint_v2)
+            (l.raw_payload #>> '{deep_osint_v2,cnpj_data,socios,0,nome}') AS responsavel,
             COALESCE(s.interest_count, 0) AS interest_count,
             s.interest_categorias
         FROM leads l
@@ -756,7 +758,7 @@ with aba_leads:
     df_page = df_f.iloc[start_idx:start_idx + PAGE_SIZE]
 
     # Cabecalho da tabela manual
-    h = st.columns([0.5, 1, 0.7, 1, 1.2, 2.5, 1.5, 1])
+    h = st.columns([0.5, 1.4, 1.4, 1, 1.2, 2.2, 1.6, 1.6])
     h[0].markdown("**📋**")
     h[1].markdown("**Score 🔥**")
     h[2].markdown("**Sinais 🎯**")
@@ -764,32 +766,80 @@ with aba_leads:
     h[4].markdown("**Nicho**")
     h[5].markdown("**Nome**")
     h[6].markdown("**Telefone**")
-    h[7].markdown("**Status**")
-    st.divider()
+    h[7].markdown("**Responsável**")
+    st.markdown(
+        '<hr style="margin:0;border:none;border-top:2px solid #444;">',
+        unsafe_allow_html=True,
+    )
 
-    # Linhas manuais com botão 📋 real em cada uma
+    # Linhas manuais com botão 📋 real + progress bar + divisorias
     for _, row in df_page.iterrows():
-        c = st.columns([0.5, 1, 0.7, 1, 1.2, 2.5, 1.5, 1])
+        c = st.columns([0.5, 1.4, 1.4, 1, 1.2, 2.2, 1.6, 1.6])
         lead_id_row = int(row["id"])
+
         if c[0].button("📋", key=f"open_ficha_{lead_id_row}", help=f"Abrir ficha completa do lead #{lead_id_row}"):
             show_lead_dialog(lead_id_row)
 
+        # Score com progress bar custom + emoji só pra 90+
         score = int(row["score_temperatura"])
-        score_emoji = "🔥" if score >= 75 else "🟡" if score >= 50 else "🧊"
-        c[1].markdown(f"{score_emoji} **{score}%**")
+        if score >= 90:
+            score_prefix = "🔥 "
+            grad = "linear-gradient(90deg,#ff4b4b,#ff8c42)"
+        elif score >= 60:
+            score_prefix = ""
+            grad = "linear-gradient(90deg,#ff8c42,#ffa726)"
+        elif score >= 30:
+            score_prefix = ""
+            grad = "linear-gradient(90deg,#fbc02d,#fdd835)"
+        else:
+            score_prefix = ""
+            grad = "linear-gradient(90deg,#546e7a,#78909c)"
+        c[1].markdown(
+            f"""<div style="background:#1a1a1a;border-radius:6px;height:22px;position:relative;overflow:hidden;margin-top:2px;">
+              <div style="background:{grad};height:100%;width:{score}%;transition:width 0.4s;"></div>
+              <div style="position:absolute;top:0;left:0;right:0;text-align:center;line-height:22px;font-size:12px;font-weight:600;color:#fff;text-shadow:0 0 4px rgba(0,0,0,0.7);">{score_prefix}{score}%</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
 
+        # Sinais com count + categorias em fonte menor entre parenteses
         sinais = int(row.get("interest_count") or 0)
-        c[2].markdown(f"🎯 **{sinais}**" if sinais > 0 else "○ 0")
+        cats = row.get("interest_categorias")
+        if sinais > 0:
+            cats_str = f"<br><span style='color:#888;font-size:11px;'>({cats})</span>" if cats else ""
+            c[2].markdown(
+                f"<span style='color:#4caf50;font-weight:600;'>🎯 {sinais}</span>{cats_str}",
+                unsafe_allow_html=True,
+            )
+        else:
+            c[2].markdown(
+                "<span style='color:#555;'>○ 0</span>",
+                unsafe_allow_html=True,
+            )
+
         c[3].markdown(f"{row['cidade_tag'] or '—'}")
         c[4].markdown(f"{row['nicho'] or '—'}")
         c[5].markdown(f"{row['nome'] or '(sem nome)'}")
+
         tel = row["telefone"]
         if tel and not pd.isna(tel):
             wa = _wa_url(tel)
             c[6].markdown(f"[{tel}]({wa})")
         else:
             c[6].markdown("—")
-        c[7].markdown(f"`{row['status']}`")
+
+        # Responsavel (do quadro societario via BrasilAPI)
+        resp = row.get("responsavel")
+        if resp and not pd.isna(resp):
+            c[7].markdown(f"{resp}")
+        else:
+            c[7].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
+
+        # Divisória entre linhas
+        st.markdown(
+            '<hr style="margin:6px 0;border:none;border-top:1px solid #2a2a2a;">',
+            unsafe_allow_html=True,
+        )
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
