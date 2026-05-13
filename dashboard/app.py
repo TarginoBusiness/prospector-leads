@@ -741,13 +741,10 @@ with aba_leads:
         load_leads_full.clear()
         st.rerun()
 
-    st.info("👆 **Clica em qualquer linha** (especialmente na coluna 📋) pra abrir a ficha completa do lead.")
-
-    # Adiciona coluna "Ver Ficha" pra ficar visual mente OBVIO que dá clique
-    df_f["ver_ficha"] = "📋 Ver"
+    st.caption("👇 Selecione uma linha da tabela, depois clique no botão pra abrir a ficha completa.")
 
     show_cols = [
-        "ver_ficha", "id", "score_temperatura", "interest_count", "interest_categorias",
+        "id", "score_temperatura", "interest_count", "interest_categorias",
         "cidade_tag", "nicho", "source",
         "nome", "telefone", "whatsapp_link", "email", "status",
         "source_url", "first_seen_at", "last_deep_dive_at",
@@ -760,7 +757,6 @@ with aba_leads:
         on_select="rerun",
         key="leads_table",
         column_config={
-            "ver_ficha": st.column_config.TextColumn("📋 Ficha", width="small", help="Clica nessa linha pra abrir a ficha completa"),
             "id": st.column_config.NumberColumn("#", width="small"),
             "score_temperatura": st.column_config.ProgressColumn(
                 "Score 🔥", min_value=0, max_value=100, format="%d%%"
@@ -774,15 +770,37 @@ with aba_leads:
         },
     )
 
-    # Detecta clique numa linha → abre ficha
+    # Botão real pra abrir a ficha (depois de selecionar linha)
     selected_rows = event.selection.rows if event and event.selection else []
-    if selected_rows:
-        idx = selected_rows[0]
-        lead_id_clicked = int(df_f.iloc[idx]["id"])
-        # Evita reabrir se mesmo lead ja foi mostrado
-        if st.session_state.get("opened_lead_id") != lead_id_clicked:
-            st.session_state["opened_lead_id"] = lead_id_clicked
-            show_lead_dialog(lead_id_clicked)
+    btn_col1, btn_col2 = st.columns([2, 5])
+    with btn_col1:
+        if selected_rows:
+            idx = selected_rows[0]
+            lead_id_clicked = int(df_f.iloc[idx]["id"])
+            nome_clicked = df_f.iloc[idx]["nome"] or "(sem nome)"
+            score_clicked = int(df_f.iloc[idx]["score_temperatura"])
+            if st.button(
+                f"📋 Abrir Ficha Completa",
+                type="primary",
+                use_container_width=True,
+                key="btn_open_ficha",
+            ):
+                show_lead_dialog(lead_id_clicked)
+        else:
+            st.button(
+                "📋 Abrir Ficha Completa (selecione linha)",
+                disabled=True,
+                use_container_width=True,
+                key="btn_open_ficha_disabled",
+            )
+
+    with btn_col2:
+        if selected_rows:
+            idx = selected_rows[0]
+            nome_clicked = df_f.iloc[idx]["nome"] or "(sem nome)"
+            score_clicked = int(df_f.iloc[idx]["score_temperatura"])
+            score_emoji = "🔥" if score_clicked >= 75 else "🟡" if score_clicked >= 50 else "🧊"
+            st.markdown(f"**Selecionado:** {score_emoji} {nome_clicked} — {score_clicked}%")
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
