@@ -12,6 +12,7 @@ ARQUITETURA:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -148,6 +149,195 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_lead_full(lead_id: int) -> dict:
+    """Carrega ficha completa do lead — usado pelo modal."""
+    with get_conn() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, source, source_url, nome, telefone, email, cnpj, nicho,
+                   cidade_tag, cidade, estado, score_temperatura, score_breakdown,
+                   status, raw_payload, notes,
+                   first_seen_at, last_seen_at, last_contacted_at, last_deep_dive_at
+            FROM leads WHERE id = %s
+            """,
+            (lead_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {}
+        cols = [d.name for d in cur.description]
+        lead = dict(zip(cols, row))
+
+        cur.execute(
+            """
+            SELECT categoria, palavra_chave, trecho_texto, source_url, boost, captured_at
+            FROM intent_signals WHERE lead_id = %s ORDER BY captured_at DESC
+            """,
+            (lead_id,),
+        )
+        cols2 = [d.name for d in cur.description]
+        lead["intent_signals"] = [dict(zip(cols2, r)) for r in cur.fetchall()]
+
+        cur.execute(
+            """
+            SELECT plataforma, url, fonte, confianca, discovered_at
+            FROM social_profiles WHERE lead_id = %s ORDER BY discovered_at DESC
+            """,
+            (lead_id,),
+        )
+        cols3 = [d.name for d in cur.description]
+        lead["social_profiles"] = [dict(zip(cols3, r)) for r in cur.fetchall()]
+
+    return lead
+
+
+def _wa_url(tel):
+    if not tel:
+        return None
+    clean = "".join(c for c in str(tel) if c.isdigit() or c == "+")
+    return f"https://wa.me/{clean.lstrip('+')}"
+
+
+@st.dialog("📋 Ficha completa do lead", width="large")
+def show_lead_dialog(lead_id: int) -> None:
+    lead = load_lead_full(lead_id)
+    if not lead:
+        st.error("Lead não encontrado.")
+        return
+
+    # Cabecalho
+    score = int(lead["score_temperatura"])
+    score_emoji = "🔥" if score >= 75 else "🟡" if score >= 50 else "🧊"
+    st.markdown(f"### {score_emoji} {lead['nome'] or '(sem nome)'} — Score **{score}%**")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**📞 Telefone:** " + (lead["telefone"] or "—"))
+        if lead["telefone"]:
+            wa = _wa_url(lead["telefone"])
+            st.markdown(f"[💬 Abrir no WhatsApp]({wa})")
+        st.markdown("**📧 Email:** " + (lead["email"] or "—"))
+        st.markdown("**🏢 CNPJ:** " + (lead["cnpj"] or "—"))
+    with col2:
+        st.markdown(f"**📍 Cidade:** {lead['cidade_tag'] or '—'} ({lead['cidade'] or 'sem detalhe'})")
+        st.markdown(f"**🏷️ Nicho:** {lead['nicho'] or '—'}")
+        st.markdown(f"**🌐 Fonte:** `{lead['source']}`")
+        st.markdown(f"**📊 Status:** `{lead['status']}`")
+
+    st.divider()
+
+    # Score breakdown
+    st.markdown("#### 🧮 Como o score foi calculado")
+    breakdown = lead.get("score_breakdown") or {}
+    if isinstance(breakdown, str):
+        try:
+            breakdown = json.loads(breakdown)
+        except Exception:
+            breakdown = {}
+    if breakdown:
+        for k, v in breakdown.items():
+            sign = "➕" if int(v) > 0 else "➖"
+            st.markdown(f"- {sign} **{k}**: {v}")
+    else:
+        st.caption("Sem breakdown registrado.")
+
+    st.divider()
+
+    # Sinais de interesse
+    sinais = lead.get("intent_signals") or []
+    interest = [s for s in sinais if (s["categoria"] or "").startswith("interest_")]
+    intent_actual = [s for s in sinais if not (s["categoria"] or "").startswith("interest_")]
+
+    if interest:
+        st.markdown("#### 🎯 Sinais de interesse detectados (Deep OSINT)")
+        for s in interest:
+            cat = s["categoria"].replace("interest_", "")
+            st.markdown(
+                f"""<div style="background:#1a3a1a;border-left:3px solid #4caf50;padding:8px 12px;margin:4px 0;border-radius:4px;">
+                <strong>🎯 {cat}</strong> · <code>+{s['boost']}</code><br>
+                <span style="color:#999;font-size:13px;">"<i>{(s['trecho_texto'] or '')[:200]}</i>"</span>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
+    if intent_actual:
+        st.markdown("#### 🔥 Intent declarado (post pedindo serviço)")
+        for s in intent_actual:
+            st.markdown(
+                f"""<div style="background:#3a1a1a;border-left:3px solid #f44336;padding:8px 12px;margin:4px 0;border-radius:4px;">
+                <strong>🔥 {s['categoria']}</strong> · keyword: <code>{s['palavra_chave']}</code> · <code>+{s['boost']}</code><br>
+                <span style="color:#999;font-size:13px;">"<i>{(s['trecho_texto'] or '')[:200]}</i>"</span>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
+    if not sinais:
+        st.caption("⚠️ Nenhum sinal de intent/interesse detectado ainda. Use 'Aprofundar OSINT' pra investigar.")
+
+    st.divider()
+
+    # Perfis sociais
+    socials = lead.get("social_profiles") or []
+    if socials:
+        st.markdown("#### 🌐 Perfis sociais cruzados")
+        for sp in socials:
+            st.markdown(f"- **{sp['plataforma']}** · [abrir]({sp['url']}) · confiança {sp['confianca']}% · via `{sp['fonte']}`")
+
+    st.divider()
+
+    # Raw payload (para auditoria)
+    with st.expander("🔍 Dados brutos coletados (raw_payload)"):
+        rp = lead.get("raw_payload") or {}
+        if isinstance(rp, str):
+            try:
+                rp = json.loads(rp)
+            except Exception:
+                rp = {}
+        st.json(rp, expanded=False)
+
+    # Datas
+    st.markdown("#### 🕐 Timeline")
+    st.caption(
+        f"Visto 1ª vez: {lead['first_seen_at']} · "
+        f"Atualizado: {lead['last_seen_at']} · "
+        f"OSINT: {lead['last_deep_dive_at'] or 'nunca'} · "
+        f"Contatado: {lead['last_contacted_at'] or 'nunca'}"
+    )
+
+    # Acoes
+    st.markdown("#### ⚡ Ações")
+    aco1, aco2, aco3 = st.columns(3)
+    with aco1:
+        if st.button("✅ Marcar contatado", use_container_width=True, key=f"mark_contacted_{lead_id}"):
+            with get_conn() as c, c.cursor() as cur:
+                cur.execute(
+                    "UPDATE leads SET status='contatado', last_contacted_at=NOW() WHERE id=%s",
+                    (lead_id,),
+                )
+            load_lead_full.clear()
+            load_leads_full.clear()
+            st.success("Lead marcado como contatado.")
+            st.rerun()
+    with aco2:
+        if st.button("❌ Descartar", use_container_width=True, key=f"discard_{lead_id}"):
+            with get_conn() as c, c.cursor() as cur:
+                cur.execute("UPDATE leads SET status='descartado' WHERE id=%s", (lead_id,))
+            load_lead_full.clear()
+            load_leads_full.clear()
+            st.success("Lead descartado.")
+            st.rerun()
+    with aco3:
+        if st.button("🔄 Re-aprofundar OSINT", use_container_width=True, key=f"redeep_{lead_id}"):
+            with get_conn() as c, c.cursor() as cur:
+                cur.execute("UPDATE leads SET last_deep_dive_at=NULL WHERE id=%s", (lead_id,))
+            ok, msg = trigger_workflow("deep-osint.yml", {"limit": "5"})
+            if ok:
+                st.success("Re-OSINT disparado! Vai entrar na próxima fila.")
+            else:
+                st.error(msg)
 
 
 def render_progress_bar(label: str, pct: float, sub: str = "") -> None:
@@ -468,7 +658,7 @@ with aba_leads:
     nicho_sel = fc3.multiselect("Nicho", nichos_disp, default=["(todos)"])
     status_sel = fc4.selectbox("Status", ["todos", "novo", "contatado", "respondeu", "fechou", "descartado"])
     so_com_tel = fc5.checkbox("📱 Só com telefone", value=False)
-    so_com_sinal = fc6.checkbox("🎯 Só com sinal", value=False, help="Só leads que têm ao menos 1 sinal de interesse detectado")
+    so_com_sinal = fc6.checkbox("🎯 Apenas com alto interesse declarado", value=False, help="Só leads que têm ao menos 1 sinal de interesse detectado via Deep OSINT")
 
     flt = df["score_temperatura"] >= score_min
     if "(todas)" not in cidade_sel and cidade_sel:
@@ -498,17 +688,23 @@ with aba_leads:
         load_leads_full.clear()
         st.rerun()
 
+    st.caption("👆 Clica numa linha pra abrir a **ficha completa** do lead.")
+
     show_cols = [
-        "score_temperatura", "interest_count", "interest_categorias",
+        "id", "score_temperatura", "interest_count", "interest_categorias",
         "cidade_tag", "nicho", "source",
         "nome", "telefone", "whatsapp_link", "email", "status",
         "source_url", "first_seen_at", "last_deep_dive_at",
     ]
-    st.dataframe(
+    event = st.dataframe(
         df_f[show_cols],
         use_container_width=True,
         hide_index=True,
+        selection_mode="single-row",
+        on_select="rerun",
+        key="leads_table",
         column_config={
+            "id": st.column_config.NumberColumn("#", width="small"),
             "score_temperatura": st.column_config.ProgressColumn(
                 "Score 🔥", min_value=0, max_value=100, format="%d%%"
             ),
@@ -520,6 +716,16 @@ with aba_leads:
             "last_deep_dive_at": st.column_config.DatetimeColumn("OSINT em"),
         },
     )
+
+    # Detecta clique numa linha → abre ficha
+    selected_rows = event.selection.rows if event and event.selection else []
+    if selected_rows:
+        idx = selected_rows[0]
+        lead_id_clicked = int(df_f.iloc[idx]["id"])
+        # Evita reabrir se mesmo lead ja foi mostrado
+        if st.session_state.get("opened_lead_id") != lead_id_clicked:
+            st.session_state["opened_lead_id"] = lead_id_clicked
+            show_lead_dialog(lead_id_clicked)
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
