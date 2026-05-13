@@ -67,36 +67,40 @@ async def scrape_search(page, query: str) -> list[dict]:
     html = await page.content()
     repo.insert_raw_page(SOURCE, url, html)
 
-    # Pega todos os links de projeto via URL pattern (mais robusto a mudanca de classes)
-    project_links = await page.eval_on_selector_all(
-        "a[href*='/jobs/']",
-        """elements => Array.from(new Set(elements.map(e => e.href)))
-            .filter(h => h.match(/\\/jobs\\/[\\w-]+/))""",
+    # Debug: pega TODOS os hrefs pra entender o padrao do Workana hoje
+    all_hrefs = await page.eval_on_selector_all(
+        ".project-item a, [class*='project'] a",
+        "elements => Array.from(new Set(elements.map(e => e.getAttribute('href')))).slice(0, 10)",
+    )
+    log.info(f"[{query}] amostra de hrefs dentro de project-item: {all_hrefs}")
+
+    # Pega titulos diretos dos cards (mais robusto que adivinhar URL)
+    cards_data = await page.eval_on_selector_all(
+        ".project-item",
+        """elements => elements.map(card => {
+            const titleEl = card.querySelector('h1, h2, h3, .title, [class*='title'], a');
+            const descEl = card.querySelector('[class*='description'], p, .body, .excerpt');
+            const linkEl = card.querySelector('a[href]');
+            return {
+                titulo: titleEl ? titleEl.textContent.trim() : '',
+                descricao: descEl ? descEl.textContent.trim() : '',
+                href: linkEl ? linkEl.getAttribute('href') : ''
+            };
+        })""",
     )
 
-    log.info(f"[{query}] {len(project_links)} links de projeto encontrados")
+    log.info(f"[{query}] {len(cards_data)} cards .project-item encontrados")
 
     projetos = []
-    for href in project_links[:20]:  # limita 20 por query
-        # Tenta extrair titulo e descricao do card sem visitar a pagina detalhada
-        try:
-            card = await page.locator(f"a[href='{href}']").first.locator("xpath=ancestor::*[self::article or self::div][1]").element_handle()
-            if not card:
-                continue
-            titulo_node = await card.query_selector("h1, h2, h3, .title, [class*='title']")
-            titulo = (await titulo_node.text_content() or "").strip() if titulo_node else ""
-            desc_node = await card.query_selector("[class*='description'], p")
-            descricao = (await desc_node.text_content() or "").strip() if desc_node else ""
-
-            if titulo:
-                projetos.append({
-                    "titulo": titulo,
-                    "descricao": descricao,
-                    "url": urljoin(BASE_URL, href),
-                })
-        except Exception as e:
-            log.debug(f"erro extraindo card de {href}: {e}")
+    for c in cards_data[:20]:
+        if not c["titulo"]:
             continue
+        url_proj = urljoin(BASE_URL, c["href"]) if c["href"] else ""
+        projetos.append({
+            "titulo": c["titulo"],
+            "descricao": c["descricao"],
+            "url": url_proj,
+        })
 
     log.info(f"[{query}] extraidos {len(projetos)} projetos com titulo")
     return projetos
