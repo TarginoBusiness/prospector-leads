@@ -26,6 +26,11 @@ from enrichers.interest_detector import InterestSignal, detect
 log = logging.getLogger("enricher.deep_osint")
 
 
+async def _empty() -> str:
+    """Placeholder pra asyncio.gather quando uma fonte e skip."""
+    return ""
+
+
 @dataclass
 class DeepOsintResult:
     sinais: list[InterestSignal] = field(default_factory=list)
@@ -47,34 +52,32 @@ COMMON_HEADERS = {
 # Fonte 1: Site oficial da empresa
 # ============================================================================
 
+async def _fetch_path(client: httpx.AsyncClient, url: str) -> str:
+    try:
+        r = await client.get(url, timeout=5.0, follow_redirects=True)
+        if r.status_code != 200:
+            return ""
+        tree = HTMLParser(r.text)
+        return (tree.text() or "")[:20000]
+    except Exception:
+        return ""
+
+
 async def coletar_site(client: httpx.AsyncClient, site_url: str) -> str:
-    """Visita home + /sobre + /servicos + /blog + /vagas — agrega todo o texto."""
+    """Visita home + /sobre + /servicos + /vagas EM PARALELO. Rapido."""
     if not site_url:
         return ""
     if not site_url.startswith(("http://", "https://")):
         site_url = "https://" + site_url
 
-    paths = ["", "/sobre", "/about", "/servicos", "/blog", "/vagas",
-             "/carreiras", "/jobs", "/contato"]
-
-    textos = []
+    # Reduzido pra 4 paths mais valiosos + timeout 5s + parallel
+    paths = ["", "/sobre", "/servicos", "/vagas"]
     parsed = urlparse(site_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
+    urls = [base + p for p in paths]
 
-    for p in paths:
-        try:
-            url = base + p
-            r = await client.get(url, timeout=10.0, follow_redirects=True)
-            if r.status_code != 200:
-                continue
-            tree = HTMLParser(r.text)
-            txt = (tree.text() or "")[:20000]
-            textos.append(txt)
-            await asyncio.sleep(0.3)
-        except Exception:
-            continue
-
-    return " ".join(textos)
+    textos = await asyncio.gather(*[_fetch_path(client, u) for u in urls])
+    return " ".join(t for t in textos if t)
 
 
 # ============================================================================
@@ -131,22 +134,15 @@ async def ddg_search(client: httpx.AsyncClient, query: str, max_results: int = 5
 
 async def coletar_dorks(client: httpx.AsyncClient, nome: str, cidade: str) -> str:
     """
-    Dorks especificos pra detectar pistas de que a empresa esta no contexto.
-    Cada dork retorna snippets, todos concatenados.
+    Dork unico OR'ado combinando todos os sinais que buscamos.
+    1 query so em vez de 4 = muito mais rapido.
     """
-    dorks = [
-        f'"{nome}" vaga (desenvolvedor OR programador OR ti)',
-        f'"{nome}" "{cidade}" (automacao OR chatbot OR "inteligencia artificial")',
-        f'"{nome}" "{cidade}" (site OR "novo aplicativo" OR app)',
-        f'"{nome}" linkedin (vaga OR contratacao)',
-    ]
-    textos = []
-    for d in dorks:
-        snip = await ddg_search(client, d, max_results=3)
-        if snip:
-            textos.append(snip)
-        await asyncio.sleep(1.5)  # cortesia DDG
-    return " ".join(textos)
+    dork = (
+        f'"{nome}" '
+        f'(vaga OR desenvolvedor OR automacao OR chatbot OR '
+        f'"inteligencia artificial" OR "novo site" OR app OR linkedin)'
+    )
+    return await ddg_search(client, dork, max_results=10)
 
 
 # ============================================================================
@@ -154,18 +150,9 @@ async def coletar_dorks(client: httpx.AsyncClient, nome: str, cidade: str) -> st
 # ============================================================================
 
 async def coletar_mencoes_regionais(client: httpx.AsyncClient, nome: str) -> str:
-    """Busca mencoes da empresa em portais regionais + universidades + governo."""
-    dorks = [
-        f'"{nome}" (sebrae OR senac OR senai OR fapema OR cnpq)',
-        f'"{nome}" (premio OR inovacao OR startup)',
-    ]
-    textos = []
-    for d in dorks:
-        snip = await ddg_search(client, d, max_results=3)
-        if snip:
-            textos.append(snip)
-        await asyncio.sleep(1.5)
-    return " ".join(textos)
+    """Dork unico OR'ado pra mencoes em contextos premium (sebrae/inovacao)."""
+    dork = f'"{nome}" (sebrae OR senac OR senai OR fapema OR premio OR inovacao OR startup)'
+    return await ddg_search(client, dork, max_results=5)
 
 
 # ============================================================================
@@ -189,39 +176,33 @@ async def aprofundar_lead(
     if not nome:
         return res
 
-    async with httpx.AsyncClient(headers=COMMON_HEADERS, timeout=20.0) as client:
-        # Fonte 1: Site oficial
-        if site_url:
-            txt = await coletar_site(client, site_url)
-            if txt:
-                res.textos_coletados["site"] = txt[:50000]
-                res.fontes_consultadas.append("site")
+    async with httpx.AsyncClient(headers=COMMON_HEADERS, timeout=15.0) as client:
+        # Roda TODAS as 5 fontes em paralelo (asyncio.gather)
+        site_task = coletar_site(client, site_url) if site_url else _empty()
+        ig_task = coletar_instagram(client, instagram_url) if instagram_url else _empty()
+        fb_task = coletar_instagram(client, facebook_url) if facebook_url else _empty()
+        dorks_task = coletar_dorks(client, nome, cidade) if cidade else _empty()
+        mencoes_task = coletar_mencoes_regionais(client, nome)
 
-        # Fonte 2: Instagram
-        if instagram_url:
-            txt = await coletar_instagram(client, instagram_url)
-            if txt:
-                res.textos_coletados["instagram"] = txt
-                res.fontes_consultadas.append("instagram")
+        site_txt, ig_txt, fb_txt, dorks_txt, mencoes_txt = await asyncio.gather(
+            site_task, ig_task, fb_task, dorks_task, mencoes_task,
+            return_exceptions=False,
+        )
 
-        # Fonte 3: Facebook (mesma logica do IG)
-        if facebook_url:
-            txt = await coletar_instagram(client, facebook_url)
-            if txt:
-                res.textos_coletados["facebook"] = txt
-                res.fontes_consultadas.append("facebook")
-
-        # Fonte 4: DDG dorks
-        if cidade:
-            txt = await coletar_dorks(client, nome, cidade)
-            if txt:
-                res.textos_coletados["ddg_dorks"] = txt
-                res.fontes_consultadas.append("ddg_dorks")
-
-        # Fonte 5: Mencoes regionais
-        txt = await coletar_mencoes_regionais(client, nome)
-        if txt:
-            res.textos_coletados["mencoes_regionais"] = txt
+        if site_txt:
+            res.textos_coletados["site"] = site_txt[:50000]
+            res.fontes_consultadas.append("site")
+        if ig_txt:
+            res.textos_coletados["instagram"] = ig_txt
+            res.fontes_consultadas.append("instagram")
+        if fb_txt:
+            res.textos_coletados["facebook"] = fb_txt
+            res.fontes_consultadas.append("facebook")
+        if dorks_txt:
+            res.textos_coletados["ddg_dorks"] = dorks_txt
+            res.fontes_consultadas.append("ddg_dorks")
+        if mencoes_txt:
+            res.textos_coletados["mencoes_regionais"] = mencoes_txt
             res.fontes_consultadas.append("mencoes_regionais")
 
     # Junta tudo e roda detector
