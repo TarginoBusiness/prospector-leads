@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# Env
+.env
+.env.local
+*.env
+
+# Crawlee storage local
+storage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Logs
+*.log
+logs/
+
+# Browsers (Playwright cache - rebaixado nos runners)
+.cache/
+
+# OS
+Thumbs.db
+.github/

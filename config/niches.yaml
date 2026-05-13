@@ -1,0 +1,22 @@
+# Nichos prioritarios e seus boosts no score.
+# Ranking baseado em pesquisa de mercado (ver Obsidian/aprendizados).
+
+nichos:
+  imobiliaria:           { boost: 15, queries: [imobiliaria, corretor de imoveis, imoveis] }
+  clinica_medica:        { boost: 15, queries: [clinica medica, consultorio, ambulatorio] }
+  clinica_odonto:        { boost: 15, queries: [clinica odontologica, dentista, odontologia] }
+  clinica_estetica:      { boost: 15, queries: [clinica estetica, estetica facial, dermatologia estetica] }
+  advocacia:             { boost: 12, queries: [advogado, escritorio de advocacia, advocacia trabalhista, advocacia previdenciario] }
+  pet_shop_vet:          { boost: 12, queries: [pet shop, clinica veterinaria, veterinario] }
+  ecommerce_local:       { boost: 12, queries: [loja online, e-commerce, loja virtual] }
+  educacao:              { boost: 10, queries: [escola, curso preparatorio, autoescola, curso online] }
+  restaurante_delivery:  { boost: 10, queries: [restaurante, delivery, hamburgueria, pizzaria] }
+  salao_barbearia:       { boost: 8,  queries: [salao de beleza, barbearia, esteticista] }
+  academia_fitness:      { boost: 8,  queries: [academia, estudio pilates, crossfit] }
+  oficina_auto:          { boost: 8,  queries: [oficina mecanica, auto center, funilaria] }
+
+# Bonus regionais (so aplica em Sao Luis pra inicio)
+nichos_regionais_sao_luis:
+  turismo:               { boost: 10, queries: [agencia de turismo sao luis, agencia de viagens sao luis] }
+  pousada_hotel:         { boost: 8,  queries: [pousada sao luis, hotel sao luis, hostel sao luis] }
+  construcao_civil:      { boost: 8,  queries: [construtora sao luis, incorporadora sao luis] }

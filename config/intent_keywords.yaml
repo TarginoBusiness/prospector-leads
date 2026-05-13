@@ -1,0 +1,95 @@
+# Palavras-chave de intencao explicita.
+# Editar livre — sem deploy, GH Actions le o YAML na proxima execucao.
+# Veja decisao em: Obsidian/Projeto-Webscraping de Clientes/decisoes/2026-05-13_palavras-chave-de-intencao.md
+
+categorias:
+  A_site:
+    boost: 30
+    palavras:
+      - preciso de um site
+      - criar um site
+      - fazer um site
+      - desenvolver um site
+      - preciso de uma landing page
+      - quero um site profissional
+      - site para minha empresa
+      - site para meu negocio
+      - construir um site
+      - encomendar um site
+
+  B_app:
+    boost: 35
+    palavras:
+      - preciso de um aplicativo
+      - preciso de um app
+      - criar aplicativo
+      - fazer aplicativo
+      - desenvolver app
+      - aplicativo para minha empresa
+      - app para meu negocio
+      - app android e ios
+      - app multiplataforma
+      - app personalizado
+      - aplicativo sob medida
+
+  C_whatsapp:
+    boost: 40
+    palavras:
+      - preciso de um bot
+      - quero um bot
+      - criar bot whatsapp
+      - automatizar whatsapp
+      - automacao de whatsapp
+      - chatbot para whatsapp
+      - atendimento automatico
+      - pre-atendimento automatico
+      - bot de atendimento
+      - bot para minha loja
+      - automatizar atendimento
+      - responder clientes automaticamente
+      - agendamento automatico whatsapp
+
+  D_ia:
+    boost: 35
+    palavras:
+      - preciso de uma ia
+      - implementar ia
+      - implementar inteligencia artificial
+      - ia para meu negocio
+      - automatizar com ia
+      - chatgpt no meu negocio
+      - agente de ia
+      - assistente virtual
+      - agente personalizado
+      - automacao com ia
+
+  E_software:
+    boost: 30
+    palavras:
+      - software sob medida
+      - sistema personalizado
+      - programa personalizado
+      - ferramenta personalizada
+      - sistema interno
+      - sistema de gestao personalizado
+      - erp customizado
+      - crm personalizado
+      - automatizar planilha
+      - automatizar processo
+      - tirar planilha do excel
+      - integrar sistemas
+      - integrar api
+
+  F_generica:
+    boost: 15
+    palavras:
+      - contratar desenvolvedor
+      - contratar programador
+      - preciso de programador
+      - preciso de desenvolvedor
+      - preciso de uma solucao tecnologica
+      - freela de programacao
+      - freelancer programador
+
+# Teto cumulativo de boost (categorias somadas)
+teto_cumulativo: 50

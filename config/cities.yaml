@@ -1,0 +1,31 @@
+# Cidades-alvo. Ordem de prioridade + boost de score.
+# Cada lead detectado em uma dessas cidades ganha o boost correspondente.
+
+cidades:
+  sao-luis:
+    nome_completo: "São Luís - MA"
+    boost: 15
+    aliases: [sao luis, são luis, são luís, slz, sao luís]
+    estado: MA
+    prioridade: 1
+
+  sao-paulo:
+    nome_completo: "São Paulo - SP"
+    boost: 10
+    aliases: [sao paulo, são paulo, sampa, sp capital]
+    estado: SP
+    prioridade: 2
+
+  curitiba:
+    nome_completo: "Curitiba - PR"
+    boost: 10
+    aliases: [curitiba, cwb]
+    estado: PR
+    prioridade: 3
+
+  rio-de-janeiro:
+    nome_completo: "Rio de Janeiro - RJ"
+    boost: 10
+    aliases: [rio de janeiro, rio, rj capital]
+    estado: RJ
+    prioridade: 4
