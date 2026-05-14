@@ -255,38 +255,73 @@ async def coletar_site(client: httpx.AsyncClient, site_url: str) -> tuple[dict, 
 
 
 # ============================================================================
-# DDG — APENAS pra DESCOBRIR URLs. Nunca rodamos detect() no resultado DDG.
+# Busca de URLs (descoberta de linkedin/vagas). NUNCA rodamos detect() no
+# resultado da busca — so usamos as URLs.
+#
+# DDG (html.duckduckgo.com) esta 100% bloqueado pros IPs do GitHub Actions:
+# todo dork voltava vazio e ainda gastava ~10s de timeout/lead. Trocamos
+# por Bing (tolera scraping de datacenter) + CIRCUIT BREAKER: depois de
+# algumas falhas seguidas, desliga a busca pro resto da run — assim a run
+# nao fica arrastando em timeout. O detector de sinais nao depende disso:
+# ele roda no conteudo do SITE da empresa, que funciona normal.
 # ============================================================================
 
-async def ddg_buscar_urls(client: httpx.AsyncClient, query: str, max_urls: int = 5,
-                          filtro_dominio: str = "") -> list[str]:
+# circuit breaker — estado do processo
+_busca_falhas = 0
+_busca_desativada = False
+_BUSCA_MAX_FALHAS = 4
+
+
+async def buscar_urls(client: httpx.AsyncClient, query: str, max_urls: int = 5,
+                      filtro_dominio: str = "") -> list[str]:
     """
-    Roda dork DDG e retorna SO AS URLs dos resultados (nao o texto/snippet).
+    Busca no Bing e retorna SO AS URLs dos resultados organicos.
     filtro_dominio: se setado, so retorna URLs que contem essa string.
+    Circuit breaker: apos varias falhas seguidas, para de tentar (run rapida).
     """
+    global _busca_falhas, _busca_desativada
+    if _busca_desativada:
+        return []
     try:
         r = await client.get(
-            f"https://html.duckduckgo.com/html/?q={quote(query)}&kl=br-pt",
-            timeout=10.0,
+            f"https://www.bing.com/search?q={quote(query)}&setlang=pt-br&cc=br",
+            timeout=6.0,
         )
         if r.status_code != 200:
+            _busca_falhas += 1
+            if _busca_falhas >= _BUSCA_MAX_FALHAS:
+                _busca_desativada = True
+                log.warning("busca desativada (circuit breaker) — Bing bloqueado")
             return []
         tree = HTMLParser(r.text)
-        urls = []
-        for link in tree.css("a.result__a"):
-            href = link.attributes.get("href", "")
-            m = re.search(r"uddg=([^&]+)", href)
-            if m:
-                href = unquote(m.group(1))
-            if href.startswith("http"):
-                if not filtro_dominio or filtro_dominio in href:
-                    urls.append(href)
+        urls: list[str] = []
+        for link in tree.css("li.b_algo h2 a, li.b_algo a.tilk"):
+            href = link.attributes.get("href", "") or ""
+            if not href.startswith("http"):
+                continue
+            if "bing.com" in href or "microsoft.com/" in href:
+                continue
+            if filtro_dominio and filtro_dominio not in href:
+                continue
+            if href not in urls:
+                urls.append(href)
             if len(urls) >= max_urls:
                 break
+        # achou resultado -> zera contador de falhas
+        if urls:
+            _busca_falhas = 0
         return urls
     except Exception as e:
-        log.debug(f"ddg_buscar_urls falhou: {e}")
+        _busca_falhas += 1
+        if _busca_falhas >= _BUSCA_MAX_FALHAS:
+            _busca_desativada = True
+            log.warning("busca desativada (circuit breaker) — Bing inacessivel")
+        log.debug(f"buscar_urls falhou: {e}")
         return []
+
+
+# alias de compat — codigo antigo chamava ddg_buscar_urls
+ddg_buscar_urls = buscar_urls
 
 
 # ============================================================================
@@ -420,7 +455,9 @@ async def aprofundar_v2(
                 if cnpj_data:
                     res.fontes_consultadas.append("cnpj_site")
                     log.info(f"  CNPJ achado no rodape do site: {cnpj_do_site}")
-            if not cnpj_data:
+            # fallback via dorks — so se a busca ainda nao foi desativada
+            # (senao gasta 4 timeouts a toa)
+            if not cnpj_data and not _busca_desativada:
                 cnpj_data = await cnpj_socios.descobrir_cnpj_verificado(
                     client, nome, endereco_gmaps=endereco_gmaps,
                     cidade=cidade, min_proximidade=60,
@@ -524,7 +561,14 @@ async def _descobrir_instagram(client: httpx.AsyncClient, nome: str,
     Retorna (url, bio). url="" se nao achou ou se nao bateu nada.
     """
     try:
-        url = await instagram.buscar_perfil(client, nome, cidade)
+        dork = f'site:instagram.com "{nome}"' + (f' "{cidade}"' if cidade else "")
+        urls = await buscar_urls(client, dork, max_urls=3, filtro_dominio="instagram.com/")
+        # pega o 1o que parece perfil (nao /p/ /reel/ etc)
+        url = ""
+        for u in urls:
+            if _eh_perfil_social(u, "instagram"):
+                url = u.split("?")[0]
+                break
         if not url:
             return "", ""
         perfil = await instagram.coletar_perfil(client, url)
