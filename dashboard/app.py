@@ -574,25 +574,24 @@ def load_runs() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=5, show_spinner=False)
-def load_active_run() -> dict | None:
+def load_active_runs() -> list[dict]:
     """
-    Run ATIVO de scraper. Filtra rows antigas (mais de 1h sem updates)
-    pra nao mostrar barra fantasma de runs cancelados/orfaos.
+    TODOS os runs ATIVOS (sem ended_at). Olha ate 5h atras pra cobrir
+    jobs longos (mass enrich + deep osint v2 podem rodar ~3-4h cada).
+    Retorna lista — pode haver multiplos rodando em paralelo.
     """
     sql = """
-        SELECT id, source, started_at, pages_ok, pages_failed, leads_new, leads_updated
+        SELECT id, source, started_at, pages_ok, pages_failed,
+               leads_new, leads_updated, metadata
         FROM scrape_runs
         WHERE ended_at IS NULL
-          AND started_at > NOW() - INTERVAL '1 hour'
-        ORDER BY started_at DESC LIMIT 1
+          AND started_at > NOW() - INTERVAL '5 hours'
+        ORDER BY started_at DESC
     """
     with get_conn() as c, c.cursor() as cur:
         cur.execute(sql)
-        row = cur.fetchone()
-        if not row:
-            return None
         cols = [d.name for d in cur.description]
-        return dict(zip(cols, row))
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 # ============== GitHub API ==============
@@ -648,52 +647,69 @@ def painel_ao_vivo():
     """
     df = load_leads_compact()
 
-    # Barra de progresso APENAS se tem scrape/enrich/osint ativo (filtra stale)
-    active = load_active_run()
-    if active:
-        elapsed = (datetime.now(timezone.utc) - active["started_at"]).total_seconds()
-        # ETA em segundos por source
-        eta_map = {
-            "gmaps":          2700,   # ~45min
-            "workana":         180,
-            "99freelas":       180,
-            "enrich_gmaps":    600,   # 100 leads × 6s
-            "deep_osint":     1200,   # 100 leads × 12s
-            "deep_osint_v2":  1800,   # 100 leads × 18s (mais fontes)
-        }
-        labels = {
-            "gmaps":          ("🗺️", "Buscando empresas no Google Maps"),
-            "workana":        ("🕵️", "Caçando intent quente no Workana"),
-            "99freelas":      ("💼", "Caçando intent no 99Freelas"),
-            "enrich_gmaps":   ("📞", "Enriquecendo leads com cascata de técnicas"),
-            "deep_osint":     ("🔍", "Aprofundando OSINT (sinais de interesse)"),
-            "deep_osint_v2":  ("🕵️‍♀️", "Aprofundando OSINT v2 (8 fontes + perfis sociais + CNPJ)"),
-        }
-        eta = eta_map.get(active["source"], 600)
-        emoji, descricao = labels.get(active["source"], ("⏳", active["source"]))
-        progress = min(elapsed / eta, 0.97)
+    # Barras de progresso pra TODOS os runs ativos (pode haver múltiplos em paralelo)
+    active_runs = load_active_runs()
+    labels = {
+        "gmaps":          ("🗺️", "Google Maps"),
+        "workana":        ("🕵️", "Workana"),
+        "99freelas":      ("💼", "99Freelas"),
+        "enrich_gmaps":   ("📞", "Enriquecendo telefones"),
+        "deep_osint":     ("🔍", "Deep OSINT v1"),
+        "deep_osint_v2":  ("🕵️‍♀️", "Deep OSINT v2 (8 fontes)"),
+    }
+    # ETAs em segundos quando não temos total_leads no metadata
+    eta_fallback = {
+        "gmaps": 2700, "workana": 180, "99freelas": 180,
+        "enrich_gmaps": 12000, "deep_osint": 7200, "deep_osint_v2": 12000,
+    }
 
-        # Sub-texto adaptado pra cada tipo
+    for active in active_runs:
+        elapsed = (datetime.now(timezone.utc) - active["started_at"]).total_seconds()
+        emoji, descricao = labels.get(active["source"], ("⏳", active["source"]))
+        meta = active.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+
+        # Progresso REAL baseado em pages_ok / total_leads (quando temos)
+        total_target = meta.get("total_leads") or meta.get("limit")
+        if total_target and active["pages_ok"] > 0:
+            progress = min(active["pages_ok"] / int(total_target), 0.99)
+            eta_total = int(elapsed / progress) if progress > 0.01 else int(eta_fallback.get(active["source"], 600))
+            eta_restante = max(0, eta_total - int(elapsed))
+            sub_extra = f" · ETA: {eta_restante//60}min restantes"
+        else:
+            # Fallback: estimativa de tempo
+            eta = eta_fallback.get(active["source"], 600)
+            progress = min(elapsed / eta, 0.97)
+            sub_extra = ""
+
+        # Sub-texto contextual
         if active["source"] in ("deep_osint", "deep_osint_v2"):
             sub = (
-                f"⏱️ {int(elapsed)}s · "
+                f"⏱️ {int(elapsed//60)}min · "
                 f"🎯 {active['leads_new']} c/ sinais · "
                 f"○ {active['leads_updated']} sem sinais · "
-                f"📊 {active['pages_ok']} leads processados"
+                f"📊 {active['pages_ok']}/{total_target or '?'} processados"
+                + sub_extra
             )
         elif active["source"] == "enrich_gmaps":
             sub = (
-                f"⏱️ {int(elapsed)}s · "
+                f"⏱️ {int(elapsed//60)}min · "
                 f"📞 {active['leads_new']} com tel · "
                 f"🌐 {active['leads_updated']} parciais · "
-                f"📊 {active['pages_ok']} processados"
+                f"📊 {active['pages_ok']}/{total_target or '?'} processados"
+                + sub_extra
             )
         else:
             sub = (
-                f"⏱️ {int(elapsed)}s · "
+                f"⏱️ {int(elapsed//60)}min · "
                 f"✨ {active['leads_new']} novos · "
                 f"🔄 {active['leads_updated']} atualizados · "
-                f"📄 {active['pages_ok']} OK"
+                f"📄 {active['pages_ok']} páginas OK"
+                + sub_extra
             )
 
         render_progress_bar(
@@ -855,40 +871,10 @@ with aba_leads:
     def _score_relativo(raw_int: int) -> int:
         return int(round(10 + 90 * (raw_int - raw_min) / raw_range))
 
-    # === ABRIR FICHA via widgets nativos (sandbox iframe bloqueia form/JS) ===
-    open_col, btn_col, _ = st.columns([4, 1.2, 0.8])
-    with open_col:
-        lead_opts = {
-            f"#{int(r['id'])} · {int(r['score_temperatura'])}pts · "
-            f"{r['nome'] or '(sem nome)'} · "
-            f"{r['cidade_tag'] or '—'} · {r['nicho'] or '—'}": int(r["id"])
-            for _, r in df_f.head(300).iterrows()
-        }
-        sel_label = st.selectbox(
-            "🔍 Selecione um lead pra abrir a ficha (digite pra filtrar por nome/cidade/nicho)",
-            options=list(lead_opts.keys()) if lead_opts else [],
-            index=None,
-            placeholder="Procurar lead...",
-            key="select_lead_open",
-        )
-    with btn_col:
-        st.write("")  # spacing pra alinhar
-        st.write("")
-        if st.button(
-            "📋 Abrir Ficha",
-            type="primary",
-            use_container_width=True,
-            disabled=not sel_label,
-            key="btn_open_ficha_main",
-        ):
-            if sel_label:
-                show_lead_dialog(lead_opts[sel_label])
-
     st.caption(
         f"📊 **{len(df_f)} leads** no filtro · "
-        f"Score relativo (100%=top {raw_max}pts, 10%=base {raw_min}pts) · "
-        f"💡 Clica em **📋 #N** em qualquer linha → ficha abre em nova aba (instantâneo) · "
-        f"Ou usa o dropdown acima pra abrir nesta janela."
+        f"Score relativo (100% = top {raw_max} pts, 10% = base {raw_min} pts) · "
+        f"💡 Clica em **📋** em qualquer linha da tabela pra abrir a ficha completa."
     )
 
     # Verifica query param "lead_id" (backup pra clicks de fora)
@@ -902,10 +888,6 @@ with aba_leads:
             pass
 
     # ====== TABELA AGGRID — scroll virtual + botao por linha ======
-    st.caption(
-        f"📊 **{len(df_f)} leads** · "
-        f"Scroll infinito · Clica no 📋 da linha pra abrir ficha NESTA janela."
-    )
 
     # Prepara DataFrame pra exibicao no AgGrid
     df_grid = df_f[[
