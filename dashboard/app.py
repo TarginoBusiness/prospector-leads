@@ -358,82 +358,88 @@ def show_lead_dialog(lead_id: int) -> None:
 
     if interest:
         st.markdown("#### 🎯 Sinais de interesse detectados (Deep OSINT)")
-        st.caption("👆 Clica num card pra abrir a fonte (Chrome destaca o trecho em amarelo automaticamente via text fragments).")
+        st.caption("👆 Clica em **🔗 Abrir fonte** pra ver a página (Chrome destaca o trecho em amarelo via text fragments).")
         from urllib.parse import quote as _q
         for s in interest:
             cat = s["categoria"].replace("interest_", "")
             base_url = s.get("source_url") or ""
             trecho = (s.get("trecho_texto") or "").strip()
-            # Constrói URL com text fragment do Chrome (#:~:text=...)
-            # Pega substring limpa pra usar como anchor
-            if base_url and trecho:
-                # Limpa trecho: tira chars HTML/CSS bagunçados, pega texto limpo
-                limpo = re.sub(r"[<>{};|]", " ", trecho)
-                limpo = re.sub(r"\s+", " ", limpo).strip()
-                # Pega palavras significativas (~30-80 chars)
-                anchor = limpo[:80].strip()
-                if anchor:
-                    href = f"{base_url}#:~:text={_q(anchor)}"
+            # URL com text fragment do Chrome (#:~:text=...)
+            href = ""
+            if base_url:
+                if trecho:
+                    limpo = re.sub(r"[<>{};|]", " ", trecho)
+                    limpo = re.sub(r"\s+", " ", limpo).strip()
+                    anchor = limpo[:80].strip()
+                    href = f"{base_url}#:~:text={_q(anchor)}" if anchor else base_url
                 else:
                     href = base_url
-            else:
-                href = base_url
 
             preview = trecho[:200] if trecho else "(sem trecho)"
-            cursor_style = "cursor:pointer;" if href else ""
-            click_attrs = (
-                f'href="{href}" target="_blank"'
-                if href else "href=\"javascript:void(0)\""
+            # Link CTA dentro do card (não envolve div — Streamlit não sanitiza)
+            link_html = (
+                f'<a href="{href}" target="_blank" style="background:#2e7d32;color:white;text-decoration:none;'
+                f'padding:3px 9px;border-radius:3px;font-size:11px;font-weight:600;display:inline-block;margin-left:8px;">'
+                f'🔗 Abrir fonte com destaque 🟡'
+                f'</a>'
+                if href else
+                '<span style="color:#666;font-size:11px;margin-left:8px;">(sem URL da fonte)</span>'
             )
 
             st.markdown(
-                f"""<a {click_attrs} style="text-decoration:none;color:inherit;display:block;">
-                <div style="background:#1a3a1a;border-left:3px solid #4caf50;padding:10px 12px;margin:6px 0;border-radius:4px;{cursor_style}transition:background 0.15s, transform 0.1s;"
-                     onmouseover="this.style.background='#234d23';this.style.transform='translateX(2px)';"
-                     onmouseout="this.style.background='#1a3a1a';this.style.transform='translateX(0)';">
-                <strong style="color:#81c784;">🎯 {cat}</strong>
-                · keyword: <code style="background:#0a2a0a;color:#81c784;padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
-                · <code style="background:#0a2a0a;color:#81c784;padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
-                {"<span style='color:#81c784;font-size:12px;margin-left:6px;'>🔗 abre fonte com destaque amarelo</span>" if href else ""}
-                <br>
-                <span style="color:#999;font-size:13px;">"<i>{preview}</i>"</span>
+                f"""<div style="background:#1a3a1a;border-left:3px solid #4caf50;padding:10px 12px;margin:6px 0;border-radius:4px;">
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                  <strong style="color:#81c784;">🎯 {cat}</strong>
+                  <span style="color:#aaa;">·</span>
+                  <span style="font-size:12px;color:#aaa;">keyword:</span>
+                  <code style="background:#0a2a0a;color:#81c784;padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
+                  <code style="background:#0a2a0a;color:#81c784;padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
+                  {link_html}
                 </div>
-                </a>""",
+                <div style="color:#999;font-size:13px;margin-top:6px;font-style:italic;">"{preview}"</div>
+                </div>""",
                 unsafe_allow_html=True,
             )
 
     if intent_actual:
         st.markdown("#### 🔥 Intent declarado (post pedindo serviço)")
-        st.caption("👆 Clica num card pra abrir o post original (Chrome destaca o trecho em amarelo).")
+        st.caption("👆 Clica em **🔗 Abrir post** pra ver a página original.")
         from urllib.parse import quote as _q2
         for s in intent_actual:
             base_url = s.get("source_url") or ""
             trecho = (s.get("trecho_texto") or "").strip()
-            if base_url and trecho:
-                limpo = re.sub(r"[<>{};|]", " ", trecho)
-                limpo = re.sub(r"\s+", " ", limpo).strip()
-                anchor = limpo[:80].strip()
-                href = f"{base_url}#:~:text={_q2(anchor)}" if anchor else base_url
-            else:
-                href = base_url
+            href = ""
+            if base_url:
+                if trecho:
+                    limpo = re.sub(r"[<>{};|]", " ", trecho)
+                    limpo = re.sub(r"\s+", " ", limpo).strip()
+                    anchor = limpo[:80].strip()
+                    href = f"{base_url}#:~:text={_q2(anchor)}" if anchor else base_url
+                else:
+                    href = base_url
 
             preview = trecho[:200] if trecho else "(sem trecho)"
-            cursor_style = "cursor:pointer;" if href else ""
-            click_attrs = f'href="{href}" target="_blank"' if href else 'href="javascript:void(0)"'
+            link_html = (
+                f'<a href="{href}" target="_blank" style="background:#c62828;color:white;text-decoration:none;'
+                f'padding:3px 9px;border-radius:3px;font-size:11px;font-weight:600;display:inline-block;margin-left:8px;">'
+                f'🔗 Abrir post com destaque 🟡'
+                f'</a>'
+                if href else
+                '<span style="color:#666;font-size:11px;margin-left:8px;">(sem URL da fonte)</span>'
+            )
 
             st.markdown(
-                f"""<a {click_attrs} style="text-decoration:none;color:inherit;display:block;">
-                <div style="background:#3a1a1a;border-left:3px solid #f44336;padding:10px 12px;margin:6px 0;border-radius:4px;{cursor_style}transition:background 0.15s, transform 0.1s;"
-                     onmouseover="this.style.background='#4d2323';this.style.transform='translateX(2px)';"
-                     onmouseout="this.style.background='#3a1a1a';this.style.transform='translateX(0)';">
-                <strong style="color:#ef9a9a;">🔥 {s['categoria']}</strong>
-                · keyword: <code style="background:#2a0a0a;color:#ef9a9a;padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
-                · <code style="background:#2a0a0a;color:#ef9a9a;padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
-                {"<span style='color:#ef9a9a;font-size:12px;margin-left:6px;'>🔗 abre post com destaque</span>" if href else ""}
-                <br>
-                <span style="color:#999;font-size:13px;">"<i>{preview}</i>"</span>
+                f"""<div style="background:#3a1a1a;border-left:3px solid #f44336;padding:10px 12px;margin:6px 0;border-radius:4px;">
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                  <strong style="color:#ef9a9a;">🔥 {s['categoria']}</strong>
+                  <span style="color:#aaa;">·</span>
+                  <span style="font-size:12px;color:#aaa;">keyword:</span>
+                  <code style="background:#2a0a0a;color:#ef9a9a;padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
+                  <code style="background:#2a0a0a;color:#ef9a9a;padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
+                  {link_html}
                 </div>
-                </a>""",
+                <div style="color:#999;font-size:13px;margin-top:6px;font-style:italic;">"{preview}"</div>
+                </div>""",
                 unsafe_allow_html=True,
             )
 
