@@ -854,17 +854,46 @@ with aba_leads:
     def _score_relativo(raw_int: int) -> int:
         return int(round(10 + 90 * (raw_int - raw_min) / raw_range))
 
+    # === ABRIR FICHA via widgets nativos (sandbox iframe bloqueia form/JS) ===
+    open_col, btn_col, _ = st.columns([4, 1.2, 0.8])
+    with open_col:
+        lead_opts = {
+            f"#{int(r['id'])} · {int(r['score_temperatura'])}pts · "
+            f"{r['nome'] or '(sem nome)'} · "
+            f"{r['cidade_tag'] or '—'} · {r['nicho'] or '—'}": int(r["id"])
+            for _, r in df_f.head(300).iterrows()
+        }
+        sel_label = st.selectbox(
+            "🔍 Selecione um lead pra abrir a ficha (digite pra filtrar por nome/cidade/nicho)",
+            options=list(lead_opts.keys()) if lead_opts else [],
+            index=None,
+            placeholder="Procurar lead...",
+            key="select_lead_open",
+        )
+    with btn_col:
+        st.write("")  # spacing pra alinhar
+        st.write("")
+        if st.button(
+            "📋 Abrir Ficha",
+            type="primary",
+            use_container_width=True,
+            disabled=not sel_label,
+            key="btn_open_ficha_main",
+        ):
+            if sel_label:
+                show_lead_dialog(lead_opts[sel_label])
+
     st.caption(
         f"📊 **{len(df_f)} leads** no filtro · "
-        f"Score = ranking relativo (100% = top score atual de {raw_max} pts, 10% = menor de {raw_min} pts)."
+        f"Score = ranking relativo (100% = top score atual de {raw_max} pts, 10% = menor de {raw_min} pts) · "
+        f"Dropdown lista top 300."
     )
 
-    # Verifica query param "lead_id" — abre ficha se setado (click no botao 📋)
+    # Verifica query param "lead_id" (backup pra clicks de fora)
     qp_lead_id = st.query_params.get("lead_id")
     if qp_lead_id:
         try:
             lead_id_to_open = int(qp_lead_id)
-            # Limpa o param pra nao reabrir em reload futuro
             del st.query_params["lead_id"]
             show_lead_dialog(lead_id_to_open)
         except (ValueError, KeyError):
@@ -917,16 +946,11 @@ with aba_leads:
         resp = row.get("responsavel")
         resp_html = _esc(resp) if resp and not pd.isna(resp) else '<span class="empty-cell">—</span>'
 
-        # Botao via <form> com target="_top" — funciona sem JS, sem sanitizacao
-        ficha_btn = (
-            f'<form action="" method="get" target="_top" style="display:inline;margin:0;padding:0;">'
-            f'<input type="hidden" name="lead_id" value="{lead_id_row}">'
-            f'<button type="submit" class="ficha-btn">📋</button>'
-            f'</form>'
-        )
+        # ID em destaque (em vez do botao de prancheta que nao funcionava)
+        id_cell = f'<span style="color:#888;font-weight:600;">#{lead_id_row}</span>'
         rows_html.append(
             f'<tr>'
-            f'<td>{ficha_btn}</td>'
+            f'<td>{id_cell}</td>'
             f'<td>{score_html}</td>'
             f'<td>{sinais_html}</td>'
             f'<td>{_esc(row["cidade_tag"]) or "—"}</td>'
@@ -999,7 +1023,7 @@ with aba_leads:
       <table class="leads-html-table">
         <thead>
           <tr>
-            <th style="width:55px;">📋</th>
+            <th style="width:60px;">ID</th>
             <th style="width:110px;">Score 🔥</th>
             <th style="width:140px;">Sinais 🎯</th>
             <th style="width:90px;">Cidade</th>
