@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS leads (
 );
 -- Coluna nova (idempotente) — ALTER em vez de DROP/CREATE
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_deep_dive_at TIMESTAMPTZ;
+-- Falso lead: concorrente nichado / ja tem servico semelhante. Linha fica vermelha na tabela.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS falso_lead BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS falso_lead_motivo TEXT;
 CREATE INDEX IF NOT EXISTS idx_leads_score   ON leads(score_temperatura DESC);
 CREATE INDEX IF NOT EXISTS idx_leads_cidade  ON leads(cidade_tag);
 CREATE INDEX IF NOT EXISTS idx_leads_nicho   ON leads(nicho);

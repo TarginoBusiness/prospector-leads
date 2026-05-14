@@ -43,6 +43,7 @@ SQL_UPDATE_LEAD = """
     UPDATE leads SET
         score_temperatura  = LEAST(100, score_temperatura + %(boost)s),
         cnpj               = COALESCE(cnpj, %(cnpj)s),
+        email              = COALESCE(email, %(email_receita)s),
         score_breakdown    = score_breakdown || %(breakdown_extra)s::jsonb,
         raw_payload        = raw_payload || %(payload_extra)s::jsonb,
         last_deep_dive_at  = NOW()
@@ -173,10 +174,18 @@ async def main(limit: int = 1000) -> None:
                 }
             }
 
+            # email da Receita (so usa se for um email valido de verdade)
+            email_receita = ""
+            if r.cnpj_data:
+                ev = (r.cnpj_data.get("email") or "").strip()
+                if "@" in ev and "." in ev:
+                    email_receita = ev
+
             cur.execute(SQL_UPDATE_LEAD, {
                 "id": lead["id"],
                 "boost": r.boost_score,
                 "cnpj": r.cnpj_data.get("cnpj") if r.cnpj_data else None,
+                "email_receita": email_receita or None,
                 "breakdown_extra": json.dumps(breakdown_extra),
                 "payload_extra": json.dumps(payload_extra),
             })

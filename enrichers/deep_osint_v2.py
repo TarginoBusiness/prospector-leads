@@ -306,17 +306,29 @@ async def aprofundar_v2(
                 res.fontes_consultadas.append(fonte)
 
         # ---- FASE 3: CNPJ via BrasilAPI (dado estruturado direto) ----
+        # Prioridade: 1) CNPJ ja conhecido  2) CNPJ no rodape do site visitado
+        # (confiavel, sem DDG)  3) descoberta via dorks DDG (fallback).
         try:
+            cnpj_data = {}
+            cnpj_do_site = "" if cnpj else _extrair_cnpj_de_textos(res.textos_por_url)
             if cnpj:
                 cnpj_data = await cnpj_socios.consultar_brasilapi(client, cnpj)
-            else:
+                if cnpj_data:
+                    res.fontes_consultadas.append("brasilapi_cnpj")
+            elif cnpj_do_site:
+                cnpj_data = await cnpj_socios.consultar_brasilapi(client, cnpj_do_site)
+                if cnpj_data:
+                    res.fontes_consultadas.append("cnpj_site")
+                    log.info(f"  CNPJ achado no rodape do site: {cnpj_do_site}")
+            if not cnpj_data:
                 cnpj_data = await cnpj_socios.descobrir_cnpj_verificado(
                     client, nome, endereco_gmaps=endereco_gmaps,
                     cidade=cidade, min_proximidade=60,
                 )
+                if cnpj_data:
+                    res.fontes_consultadas.append("brasilapi_cnpj")
             if cnpj_data:
                 res.cnpj_data = cnpj_data
-                res.fontes_consultadas.append("brasilapi_cnpj")
         except Exception as e:
             log.debug(f"cnpj falhou: {e}")
 
@@ -358,3 +370,22 @@ async def aprofundar_v2(
 
 async def _empty_dict() -> dict:
     return {}
+
+
+# CNPJ no formato XX.XXX.XXX/XXXX-XX — a barra obrigatoria evita falso
+# positivo (sequencia aleatoria de numeros). Rodape de site eh fonte confiavel.
+_CNPJ_RE = re.compile(r"\b(\d{2}\.?\d{3}\.?\d{3}/\d{4}-?\d{2})\b")
+
+
+def _extrair_cnpj_de_textos(textos_por_url: dict) -> str:
+    """
+    Varre o texto das paginas visitadas (home, /sobre, rodape...) procurando
+    um CNPJ. Retorna os 14 digitos limpos do primeiro encontrado, ou "".
+    """
+    for texto in textos_por_url.values():
+        m = _CNPJ_RE.search(texto or "")
+        if m:
+            limpo = re.sub(r"\D", "", m.group(1))
+            if len(limpo) == 14:
+                return limpo
+    return ""

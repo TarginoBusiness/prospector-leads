@@ -235,7 +235,7 @@ def load_lead_full(lead_id: int) -> dict:
             """
             SELECT id, source, source_url, nome, telefone, email, cnpj, nicho,
                    cidade_tag, cidade, estado, score_temperatura, score_breakdown,
-                   status, raw_payload, notes,
+                   status, raw_payload, notes, falso_lead, falso_lead_motivo,
                    first_seen_at, last_seen_at, last_contacted_at, last_deep_dive_at
             FROM leads WHERE id = %s
             """,
@@ -383,6 +383,16 @@ def show_lead_dialog(lead_id: int) -> None:
         unsafe_allow_html=True,
     )
 
+    # Banner vermelho se for FALSO LEAD
+    if lead.get("falso_lead"):
+        st.markdown(
+            f"""<div style="background:#3a1414;border-left:4px solid #c62828;padding:8px 12px;
+            margin:4px 0 8px;border-radius:4px;color:#ff8a80;font-weight:600;">
+            🚫 FALSO LEAD — {lead.get('falso_lead_motivo') or 'motivo não informado'}
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**📞 Telefone:** " + (lead["telefone"] or "—"))
@@ -396,6 +406,38 @@ def show_lead_dialog(lead_id: int) -> None:
         st.markdown(f"**🏷️ Nicho:** {lead['nicho'] or '—'}")
         st.markdown(f"**🌐 Fonte:** `{lead['source']}`")
         st.markdown(f"**📊 Status:** `{lead['status']}`")
+
+    # ====== Dados da Receita (CNPJ + sócios via BrasilAPI) ======
+    raw_payload = lead.get("raw_payload") or {}
+    if isinstance(raw_payload, str):
+        try:
+            raw_payload = json.loads(raw_payload)
+        except Exception:
+            raw_payload = {}
+    cnpj_data = ((raw_payload.get("deep_osint_v2") or {}).get("cnpj_data")) or {}
+
+    if cnpj_data:
+        st.divider()
+        st.markdown("#### 🏢 Dados oficiais (Receita Federal · BrasilAPI)")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            st.markdown(f"**Razão social:** {cnpj_data.get('razao_social') or '—'}")
+            st.markdown(f"**Nome fantasia:** {cnpj_data.get('nome_fantasia') or '—'}")
+            st.markdown(f"**CNPJ:** {cnpj_data.get('cnpj') or lead.get('cnpj') or '—'}")
+            st.markdown(f"**Situação:** {cnpj_data.get('situacao') or '—'}")
+        with rc2:
+            st.markdown(f"**📧 Email (Receita):** {cnpj_data.get('email') or '—'}")
+            st.markdown(f"**📞 Telefone (Receita):** {cnpj_data.get('telefone_receita') or '—'}")
+            st.markdown(f"**Atividade (CNAE):** {cnpj_data.get('cnae_principal') or '—'}")
+            st.markdown(f"**Abertura:** {cnpj_data.get('data_abertura') or '—'}")
+        socios = cnpj_data.get("socios") or []
+        if socios:
+            st.markdown("**👤 Responsáveis / quadro societário:**")
+            for so in socios:
+                qual = so.get("qualificacao") or ""
+                st.markdown(f"- **{so.get('nome') or '—'}**" + (f" — _{qual}_" if qual else ""))
+        if cnpj_data.get("match_fraco"):
+            st.caption("⚠️ Match de endereço fraco — confira se o CNPJ é mesmo dessa empresa.")
 
     st.divider()
 
@@ -617,6 +659,43 @@ def show_lead_dialog(lead_id: int) -> None:
             else:
                 st.error(msg)
 
+    # ====== Falso Lead (concorrente / ja tem servico) — linha fica vermelha ======
+    st.markdown("##### 🚫 Falso Lead")
+    if lead.get("falso_lead"):
+        st.caption(f"Marcado como falso lead — motivo: **{lead.get('falso_lead_motivo') or '—'}**")
+        if st.button("↩️ Desmarcar falso lead", use_container_width=True, key=f"unfalso_{lead_id}"):
+            with get_conn() as c, c.cursor() as cur:
+                cur.execute(
+                    "UPDATE leads SET falso_lead=FALSE, falso_lead_motivo=NULL WHERE id=%s",
+                    (lead_id,),
+                )
+            load_lead_full.clear()
+            load_leads_full.clear()
+            st.success("Desmarcado.")
+            st.rerun()
+    else:
+        st.caption("Marca leads que não servem (concorrente nichado, já tem serviço semelhante). "
+                   "A linha dele fica **vermelha** na tabela.")
+        fc1, fc2 = st.columns([2, 1])
+        with fc1:
+            motivo = st.selectbox(
+                "Motivo",
+                ["É concorrente", "Já possui serviço semelhante", "Fora do perfil", "Outro"],
+                key=f"falso_motivo_{lead_id}",
+                label_visibility="collapsed",
+            )
+        with fc2:
+            if st.button("🚫 Falso Lead", use_container_width=True, key=f"falso_{lead_id}"):
+                with get_conn() as c, c.cursor() as cur:
+                    cur.execute(
+                        "UPDATE leads SET falso_lead=TRUE, falso_lead_motivo=%s WHERE id=%s",
+                        (motivo, lead_id),
+                    )
+                load_lead_full.clear()
+                load_leads_full.clear()
+                st.success(f"Marcado como falso lead: {motivo}")
+                st.rerun()
+
 
 def render_progress_bar(label: str, pct: float, sub: str = "") -> None:
     """Progress bar custom com animacao bonita."""
@@ -660,6 +739,7 @@ def load_leads_full() -> pd.DataFrame:
             l.score_temperatura, l.score_breakdown,
             l.status, l.first_seen_at, l.last_seen_at, l.last_contacted_at,
             l.last_deep_dive_at, l.notes,
+            l.falso_lead, l.falso_lead_motivo,
             -- Extrai responsavel principal do quadro societario (BrasilAPI via deep_osint_v2)
             (l.raw_payload #>> '{deep_osint_v2,cnpj_data,socios,0,nome}') AS responsavel,
             COALESCE(s.interest_count, 0) AS interest_count,
@@ -1028,7 +1108,8 @@ with aba_leads:
     # Prepara DataFrame pra exibicao no AgGrid
     df_grid = df_f[[
         "id", "score_temperatura", "nome", "telefone", "cidade_tag", "nicho",
-        "interest_count", "interest_categorias", "responsavel"
+        "interest_count", "interest_categorias", "responsavel",
+        "falso_lead", "falso_lead_motivo"
     ]].copy()
     df_grid["score_rel"] = df_grid["score_temperatura"].apply(_score_relativo)
     df_grid["telefone"] = df_grid["telefone"].fillna("—")
@@ -1036,6 +1117,8 @@ with aba_leads:
     df_grid["interest_categorias"] = df_grid["interest_categorias"].fillna("")
     df_grid["nicho"] = df_grid["nicho"].fillna("—")
     df_grid["cidade_tag"] = df_grid["cidade_tag"].fillna("—")
+    df_grid["falso_lead"] = df_grid["falso_lead"].fillna(False).astype(bool)
+    df_grid["falso_lead_motivo"] = df_grid["falso_lead_motivo"].fillna("")
 
     # Cell renderer pro botao 📋 — click mostra spinner IMEDIATO + dispara selection
     btn_renderer = JsCode("""
@@ -1196,12 +1279,23 @@ with aba_leads:
     gb.configure_column("cidade_tag", header_name="Cidade", width=110)
     gb.configure_column("nicho", header_name="Nicho", width=140)
     gb.configure_column("responsavel", header_name="Responsável", width=160)
+    gb.configure_column("falso_lead", hide=True)
+    gb.configure_column("falso_lead_motivo", hide=True)
     gb.configure_selection(selection_mode="single", use_checkbox=False)
 
     # Adiciona coluna virtual _btn (vazia, so pro renderer)
     df_grid.insert(0, "_btn", "")
 
     grid_options = gb.build()
+    # Linha VERMELHA pros falsos leads (concorrente / ja tem servico semelhante)
+    grid_options["getRowStyle"] = JsCode("""
+        function(params) {
+            if (params.data && params.data.falso_lead === true) {
+                return { background: 'rgba(198,40,40,0.28)', color: '#ff8a80' };
+            }
+            return null;
+        }
+    """)
 
     response = AgGrid(
         df_grid,
