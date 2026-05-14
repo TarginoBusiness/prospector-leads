@@ -40,6 +40,10 @@ st.set_page_config(
 if "DATABASE_URL" in st.secrets:
     os.environ["DATABASE_URL"] = st.secrets["DATABASE_URL"]
 
+# Liga o pool de conexoes SO no dashboard (scrapers usam conexao direta —
+# o pool sincrono do psycopg trava dentro do event loop asyncio deles).
+os.environ["DB_POOL"] = "1"
+
 GH_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GH_REPO = "TarginoBusiness/prospector-leads"
 

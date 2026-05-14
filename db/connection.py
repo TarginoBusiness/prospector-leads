@@ -35,8 +35,18 @@ def get_dsn() -> str:
 
 
 def _get_pool():
-    """Cria (lazy) e devolve o pool. Retorna None se psycopg_pool indisponivel."""
+    """
+    Cria (lazy) e devolve o pool. Retorna None se psycopg_pool indisponivel
+    OU se DB_POOL != "1".
+
+    IMPORTANTE: o pool so eh usado pelo DASHBOARD (que seta DB_POOL=1). Os
+    scrapers rodam dentro de um event loop asyncio e usam conexao direta —
+    misturar o pool SINCRONO do psycopg com asyncio travava a run inteira.
+    """
     global _pool
+    if os.environ.get("DB_POOL") != "1":
+        _pool = False
+        return None
     if _pool is None:
         try:
             from psycopg_pool import ConnectionPool
