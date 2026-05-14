@@ -74,7 +74,7 @@ def main() -> None:
                     COALESCE((
                         SELECT SUM((value)::int)
                         FROM jsonb_each_text(l.score_breakdown)
-                        WHERE NOT (key LIKE '__%%')
+                        WHERE NOT starts_with(key, '__')
                           AND (value)::int >= 0
                     ), 0) AS base_score
                 FROM leads l

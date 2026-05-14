@@ -27,6 +27,9 @@ def main() -> None:
         f"WHEN '{cat}' THEN {bst}" for cat, bst in boosts.items()
     )
 
+    # IMPORTANTE: em SQL LIKE, '_' e wildcard de 1 char. Pra casar '_' literal
+    # usamos left(key,N) ou starts_with(). Bug antigo: LIKE '__%%' casava
+    # QUALQUER string >= 2 chars (porque os _ eram wildcards).
     sql = f"""
     WITH base AS (
         SELECT
@@ -35,8 +38,8 @@ def main() -> None:
             COALESCE((
                 SELECT SUM((value)::int)
                 FROM jsonb_each_text(l.score_breakdown)
-                WHERE NOT (key LIKE 'interest_%%')
-                  AND NOT (key LIKE '__%%')
+                WHERE NOT starts_with(key, 'interest_')
+                  AND NOT starts_with(key, '__')
                   AND (value)::int >= 0
             ), 0) AS base_score
         FROM leads l
@@ -51,7 +54,7 @@ def main() -> None:
         FROM (
             SELECT DISTINCT lead_id, categoria
             FROM intent_signals
-            WHERE categoria LIKE 'interest_%%'
+            WHERE starts_with(categoria, 'interest_')
         ) i
         GROUP BY i.lead_id
     ),
