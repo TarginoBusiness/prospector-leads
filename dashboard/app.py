@@ -885,8 +885,9 @@ with aba_leads:
 
     st.caption(
         f"📊 **{len(df_f)} leads** no filtro · "
-        f"Score = ranking relativo (100% = top score atual de {raw_max} pts, 10% = menor de {raw_min} pts) · "
-        f"Dropdown lista top 300."
+        f"Score relativo (100%=top {raw_max}pts, 10%=base {raw_min}pts) · "
+        f"💡 Clica em **📋 #N** em qualquer linha → ficha abre em nova aba (instantâneo) · "
+        f"Ou usa o dropdown acima pra abrir nesta janela."
     )
 
     # Verifica query param "lead_id" (backup pra clicks de fora)
@@ -946,8 +947,13 @@ with aba_leads:
         resp = row.get("responsavel")
         resp_html = _esc(resp) if resp and not pd.isna(resp) else '<span class="empty-cell">—</span>'
 
-        # ID em destaque (em vez do botao de prancheta que nao funcionava)
-        id_cell = f'<span style="color:#888;font-weight:600;">#{lead_id_row}</span>'
+        # ID + link prancheta (target=_blank é o único permitido pelo sandbox)
+        id_cell = (
+            f'<a href="?lead_id={lead_id_row}" target="_blank" '
+            f'class="ficha-link" title="Abrir ficha em nova aba">'
+            f'📋 <strong>#{lead_id_row}</strong>'
+            f'</a>'
+        )
         rows_html.append(
             f'<tr>'
             f'<td>{id_cell}</td>'
@@ -990,16 +996,22 @@ with aba_leads:
         }}
         tbody td:last-child {{ border-right: none; }}
         tbody tr:hover {{ background: rgba(255, 75, 75, 0.05); }}
-        form {{ margin: 0; padding: 0; display: inline; }}
-        .ficha-btn {{
-            background: #ff4b4b; color: white !important;
-            border: none; cursor: pointer;
-            padding: 4px 10px; border-radius: 5px;
-            font-size: 13px; font-weight: 600; line-height: 1;
-            transition: background 0.15s;
-            font-family: inherit;
+        .ficha-link {{
+            display: inline-block;
+            background: #ff4b4b;
+            color: white !important;
+            text-decoration: none !important;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1;
+            transition: background 0.15s, transform 0.1s;
+            cursor: pointer;
+            white-space: nowrap;
         }}
-        .ficha-btn:hover {{ background: #ff8c42; }}
+        .ficha-link:hover {{ background: #ff8c42; transform: scale(1.05); }}
+        .ficha-link strong {{ color: white !important; font-size: 11px; opacity: 0.95; }}
         .score-bar-outer {{
             background: #1a1a1a; border-radius: 4px; height: 18px;
             position: relative; overflow: hidden; min-width: 80px;
@@ -1023,7 +1035,7 @@ with aba_leads:
       <table class="leads-html-table">
         <thead>
           <tr>
-            <th style="width:60px;">ID</th>
+            <th style="width:85px;">📋 Abrir</th>
             <th style="width:110px;">Score 🔥</th>
             <th style="width:140px;">Sinais 🎯</th>
             <th style="width:90px;">Cidade</th>
