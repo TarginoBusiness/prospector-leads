@@ -277,6 +277,17 @@ def _wa_url(tel):
     return f"https://wa.me/{clean.lstrip('+')}"
 
 
+# Categorias de DEMANDA EXPLICITA — peso maximo no score. A empresa esta
+# literalmente contratando pra atendimento OU pediu o que vendemos.
+# Card AMARELO na ficha (pisca atencao).
+CATEGORIAS_DEMANDA = {
+    "vaga_atendimento",
+    "necessidade_explicita",
+    "vaga_tech",
+    "dor_explicita",
+}
+
+
 def _frag_encode(val: str) -> str:
     """Percent-encode pra Chrome Text Fragment — encoda tambem - , & que tem
     significado especial no parser do fragment."""
@@ -412,19 +423,37 @@ def show_lead_dialog(lead_id: int) -> None:
 
     if interest:
         st.markdown("#### 🎯 Sinais de interesse detectados (Deep OSINT)")
-        st.caption("👆 Clica em **🔗 Abrir fonte** pra ver a página (Chrome destaca o trecho em amarelo via text fragments).")
-        for s in interest:
+        st.caption("👆 Clica em **🔗 Abrir fonte** pra ver a página (Chrome destaca a menção em amarelo, igual Ctrl+F). "
+                   "🔥 Cards **amarelos** = demanda explícita (contratando atendimento / pediram o que vendemos) = peso máximo.")
+        # demanda explicita primeiro — eh o sinal mais forte
+        interest_ord = sorted(
+            interest,
+            key=lambda s: (0 if (s["categoria"] or "").replace("interest_", "") in CATEGORIAS_DEMANDA else 1,
+                           -int(s.get("boost") or 0)),
+        )
+        for s in interest_ord:
             cat = s["categoria"].replace("interest_", "")
+            is_demanda = cat in CATEGORIAS_DEMANDA
             base_url = s.get("source_url") or ""
             trecho = (s.get("trecho_texto") or "").strip()
-            # URL com Chrome Text Fragment robusto (range start,end → destaca + scrolla)
+            # URL com Chrome Text Fragment (keyword exata da página → destaca + scrolla)
             href = _text_fragment_url(base_url, trecho, s.get("palavra_chave", ""))
 
             preview = trecho[:200] if trecho else "(sem trecho)"
-            # Link CTA dentro do card (não envolve div — Streamlit não sanitiza)
+
+            # Paleta: AMARELO pra demanda explícita, verde pro resto
+            if is_demanda:
+                card_bg, card_border, txt_col, code_bg = "#3a3413", "#ffeb3b", "#ffe082", "#2a2607"
+                btn_bg = "#f9a825"
+                emoji, label = "🔥", f"DEMANDA EXPLÍCITA · {cat}"
+            else:
+                card_bg, card_border, txt_col, code_bg = "#1a3a1a", "#4caf50", "#81c784", "#0a2a0a"
+                btn_bg = "#2e7d32"
+                emoji, label = "🎯", cat
+
             link_html = (
-                f'<a href="{href}" target="_blank" style="background:#2e7d32;color:white;text-decoration:none;'
-                f'padding:3px 9px;border-radius:3px;font-size:11px;font-weight:600;display:inline-block;margin-left:8px;">'
+                f'<a href="{href}" target="_blank" style="background:{btn_bg};color:#1a1a1a;text-decoration:none;'
+                f'padding:3px 9px;border-radius:3px;font-size:11px;font-weight:700;display:inline-block;margin-left:8px;">'
                 f'🔗 Abrir fonte com destaque 🟡'
                 f'</a>'
                 if href else
@@ -432,16 +461,16 @@ def show_lead_dialog(lead_id: int) -> None:
             )
 
             st.markdown(
-                f"""<div style="background:#1a3a1a;border-left:3px solid #4caf50;padding:10px 12px;margin:6px 0;border-radius:4px;">
+                f"""<div style="background:{card_bg};border-left:4px solid {card_border};padding:10px 12px;margin:6px 0;border-radius:4px;">
                 <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
-                  <strong style="color:#81c784;">🎯 {cat}</strong>
+                  <strong style="color:{txt_col};">{emoji} {label}</strong>
                   <span style="color:#aaa;">·</span>
                   <span style="font-size:12px;color:#aaa;">keyword:</span>
-                  <code style="background:#0a2a0a;color:#81c784;padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
-                  <code style="background:#0a2a0a;color:#81c784;padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
+                  <code style="background:{code_bg};color:{txt_col};padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
+                  <code style="background:{code_bg};color:{txt_col};padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
                   {link_html}
                 </div>
-                <div style="color:#999;font-size:13px;margin-top:6px;font-style:italic;">"{preview}"</div>
+                <div style="color:#bbb;font-size:13px;margin-top:6px;font-style:italic;">"{preview}"</div>
                 </div>""",
                 unsafe_allow_html=True,
             )

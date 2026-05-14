@@ -243,24 +243,38 @@ async def aprofundar_v2(
         # ---- FASE 1: DESCOBRIR URLs via DDG (sem detect aqui!) ----
         # LinkedIn da empresa
         linkedin_dork = f'site:linkedin.com/company "{nome}"'
-        # Vagas: paginas que falam de vaga/contratacao DESSA empresa
+        # Vagas genericas: paginas que falam de vaga/contratacao DESSA empresa
         vaga_dork = (
             f'"{nome}" (vaga OR vagas OR "trabalhe conosco" OR contratando OR '
             f'"estamos contratando" OR "oportunidade")'
         )
+        # DEMANDA EXPLICITA (peso maximo): vaga de pre-atendimento/atendente/
+        # recepcao — exatamente o que nossa automacao de WhatsApp resolve.
+        # Pega LinkedIn Jobs, Workana, GetNinjas, OLX, Indeed etc naturalmente.
+        demanda_dork = (
+            f'"{nome}" (atendente OR recepcionista OR "atendimento ao cliente" OR '
+            f'sac OR "pre-atendimento" OR "central de atendimento" OR telemarketing) '
+            f'(vaga OR contratando OR "trabalhe conosco" OR "estamos contratando")'
+        )
         if cidade:
             vaga_dork += f' "{cidade}"'
+            demanda_dork += f' "{cidade}"'
 
-        linkedin_urls, vaga_urls_raw = await asyncio.gather(
+        linkedin_urls, vaga_urls_raw, demanda_urls_raw = await asyncio.gather(
             ddg_buscar_urls(client, linkedin_dork, max_urls=2, filtro_dominio="linkedin.com/company"),
             ddg_buscar_urls(client, vaga_dork, max_urls=4),
+            ddg_buscar_urls(client, demanda_dork, max_urls=5),
         )
         res.linkedin_url = linkedin_urls[0] if linkedin_urls else ""
-        # Filtra vaga_urls: evita redes sociais genericas, foca em paginas reais
-        res.vaga_urls = [
-            u for u in vaga_urls_raw
-            if not any(x in u for x in ["facebook.com", "instagram.com", "twitter.com"])
-        ][:3]
+        # Junta vaga generica + demanda explicita, filtra redes sociais, dedup.
+        # demanda_urls primeiro (prioridade — sinal mais forte).
+        res.vaga_urls = []
+        for u in demanda_urls_raw + vaga_urls_raw:
+            if any(x in u for x in ["facebook.com", "instagram.com", "twitter.com"]):
+                continue
+            if u not in res.vaga_urls:
+                res.vaga_urls.append(u)
+        res.vaga_urls = res.vaga_urls[:5]
 
         # ---- FASE 2: VISITAR todas as paginas (detect roda no conteudo) ----
         # Monta lista de (chave_fonte, url) pra visitar

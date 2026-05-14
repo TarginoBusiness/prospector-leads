@@ -94,20 +94,62 @@ categorias:
       - estagio tecnologia
       - software house
 
+  # ===================================================================
+  # DEMANDA EXPLICITA — PESO MAXIMO.
+  # A empresa esta literalmente contratando pra pre-atendimento/atendimento,
+  # ou expressa necessidade do que a gente vende (site, automacao). Esse eh
+  # o sinal mais forte: nao eh "talvez", eh demanda confirmada e verificavel.
+  # Card aparece em AMARELO na ficha do lead.
+  # ===================================================================
   vaga_atendimento:
-    descricao: "Empresa contratando atendente/recepcao/SAC = carga de atendimento manual alta = prospecto perfeito pra automacao"
-    boost: 35
+    descricao: "DEMANDA EXPLICITA: contratando atendente/recepcao/SAC/pre-atendimento — carga de atendimento manual = prospecto perfeito pra nossa automacao de WhatsApp"
+    boost: 90
     palavras:
+      - atendente de whatsapp
+      - atendente whatsapp
       - vaga atendente
       - vaga de atendente
+      - vaga para atendente
+      - contratando atendente
+      - contratamos atendente
       - vaga recepcionista
       - vaga de recepcionista
+      - vaga para recepcionista
+      - contratando recepcionista
       - vaga sac
+      - vaga de sac
       - vaga call center
       - vaga teleatendimento
-      - contratamos atendente
+      - vaga operador de telemarketing
+      - pre atendimento
+      - pre-atendimento
+      - central de atendimento
       - vaga assistente administrativo
       - vaga secretaria
+      - estamos contratando atendente
+      - precisa-se de atendente
+      - precisa se de atendente
+
+  necessidade_explicita:
+    descricao: "DEMANDA EXPLICITA: empresa expressa necessidade do que vendemos (site, app, automacao). Card AMARELO na ficha."
+    boost: 80
+    palavras:
+      - precisa de site
+      - preciso de um site
+      - orcamento de site
+      - orcamento para site
+      - refazer o site
+      - refazer nosso site
+      - site desatualizado
+      - quero um site
+      - desenvolvimento de aplicativo
+      - preciso automatizar
+      - quero automatizar
+      - precisamos automatizar
+      - precisa de chatbot
+      - quero um chatbot
+      - preciso de um sistema
+      - quero um sistema
 
   site_modernizacao:
     descricao: "Empresa esta atualizando/refazendo presenca digital"
