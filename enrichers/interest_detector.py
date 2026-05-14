@@ -40,10 +40,25 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
 
 
+@lru_cache(maxsize=512)
+def _kw_pattern(kw_norm: str) -> re.Pattern:
+    """
+    Compila regex com WORD BOUNDARY pra evitar false positives.
+    BUG ANTIGO: 'kw in texto' casava 'llm' dentro de 'smallman', 'rpa'
+    dentro de 'Serpa', etc. Agora 'llm' so casa standalone.
+    """
+    # \b no inicio e fim — keyword tem que ser palavra(s) inteira(s)
+    return re.compile(r"\b" + re.escape(kw_norm) + r"\b")
+
+
 def detect(text: str) -> tuple[list[InterestSignal], int]:
     """
     Retorna (sinais, boost total aplicado com teto).
     1 hit por categoria conta o boost dela. Multiplas categorias somam.
+
+    Matching por WORD BOUNDARY (regex \\b) — keyword tem que ser palavra
+    inteira, nao substring. Trecho extraido do texto NORMALIZADO (indices
+    corretos — bug antigo extraia do texto original com indices do norm).
     """
     if not text:
         return [], 0
@@ -58,14 +73,18 @@ def detect(text: str) -> tuple[list[InterestSignal], int]:
         cat_boost = int(info["boost"])
         for kw in info["palavras"]:
             kw_norm = _normalize(kw)
-            if kw_norm in norm:
-                idx = norm.find(kw_norm)
-                trecho = text[max(0, idx - 30): idx + len(kw_norm) + 50]
+            if len(kw_norm) < 3:  # ignora keywords curtas demais (perigosas)
+                continue
+            m = _kw_pattern(kw_norm).search(norm)
+            if m:
+                idx = m.start()
+                # Trecho extraido do NORM (indices corretos, sem acento mas legivel)
+                trecho = norm[max(0, idx - 45): idx + len(kw_norm) + 65].strip()
                 sinais.append(
                     InterestSignal(
                         categoria=cat,
                         palavra_chave=kw,
-                        trecho=trecho.strip(),
+                        trecho=trecho,
                         boost=cat_boost,
                     )
                 )
