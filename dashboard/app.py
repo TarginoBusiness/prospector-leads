@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -278,6 +279,19 @@ def _wa_url(tel):
 
 @st.dialog("📋 Ficha completa do lead", width="large")
 def show_lead_dialog(lead_id: int) -> None:
+    # Remove overlay de loading (injetado pelo btn_renderer no AgGrid)
+    st.markdown(
+        """<script>
+        (function() {
+            try {
+                const tw = window.top || window.parent;
+                const ov = tw.document.getElementById('loading-ficha-overlay');
+                if (ov) ov.remove();
+            } catch (e) {}
+        })();
+        </script>""",
+        unsafe_allow_html=True,
+    )
     lead = load_lead_full(lead_id)
     if not lead:
         st.error("Lead não encontrado.")
@@ -344,31 +358,82 @@ def show_lead_dialog(lead_id: int) -> None:
 
     if interest:
         st.markdown("#### 🎯 Sinais de interesse detectados (Deep OSINT)")
-        st.caption("Cada sinal tem link 🔗 pra você verificar a fonte e confirmar se é real.")
+        st.caption("👆 Clica num card pra abrir a fonte (Chrome destaca o trecho em amarelo automaticamente via text fragments).")
+        from urllib.parse import quote as _q
         for s in interest:
             cat = s["categoria"].replace("interest_", "")
-            url_link = ""
-            if s.get("source_url"):
-                url_link = f' · <a href="{s["source_url"]}" target="_blank" style="color:#81c784;">🔗 ver fonte</a>'
+            base_url = s.get("source_url") or ""
+            trecho = (s.get("trecho_texto") or "").strip()
+            # Constrói URL com text fragment do Chrome (#:~:text=...)
+            # Pega substring limpa pra usar como anchor
+            if base_url and trecho:
+                # Limpa trecho: tira chars HTML/CSS bagunçados, pega texto limpo
+                limpo = re.sub(r"[<>{};|]", " ", trecho)
+                limpo = re.sub(r"\s+", " ", limpo).strip()
+                # Pega palavras significativas (~30-80 chars)
+                anchor = limpo[:80].strip()
+                if anchor:
+                    href = f"{base_url}#:~:text={_q(anchor)}"
+                else:
+                    href = base_url
+            else:
+                href = base_url
+
+            preview = trecho[:200] if trecho else "(sem trecho)"
+            cursor_style = "cursor:pointer;" if href else ""
+            click_attrs = (
+                f'href="{href}" target="_blank"'
+                if href else "href=\"javascript:void(0)\""
+            )
+
             st.markdown(
-                f"""<div style="background:#1a3a1a;border-left:3px solid #4caf50;padding:8px 12px;margin:4px 0;border-radius:4px;">
-                <strong>🎯 {cat}</strong> · keyword: <code>{s['palavra_chave']}</code> · <code>+{s['boost']}</code>{url_link}<br>
-                <span style="color:#999;font-size:13px;">"<i>{(s['trecho_texto'] or '')[:200]}</i>"</span>
-                </div>""",
+                f"""<a {click_attrs} style="text-decoration:none;color:inherit;display:block;">
+                <div style="background:#1a3a1a;border-left:3px solid #4caf50;padding:10px 12px;margin:6px 0;border-radius:4px;{cursor_style}transition:background 0.15s, transform 0.1s;"
+                     onmouseover="this.style.background='#234d23';this.style.transform='translateX(2px)';"
+                     onmouseout="this.style.background='#1a3a1a';this.style.transform='translateX(0)';">
+                <strong style="color:#81c784;">🎯 {cat}</strong>
+                · keyword: <code style="background:#0a2a0a;color:#81c784;padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
+                · <code style="background:#0a2a0a;color:#81c784;padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
+                {"<span style='color:#81c784;font-size:12px;margin-left:6px;'>🔗 abre fonte com destaque amarelo</span>" if href else ""}
+                <br>
+                <span style="color:#999;font-size:13px;">"<i>{preview}</i>"</span>
+                </div>
+                </a>""",
                 unsafe_allow_html=True,
             )
 
     if intent_actual:
         st.markdown("#### 🔥 Intent declarado (post pedindo serviço)")
+        st.caption("👆 Clica num card pra abrir o post original (Chrome destaca o trecho em amarelo).")
+        from urllib.parse import quote as _q2
         for s in intent_actual:
-            url_link = ""
-            if s.get("source_url"):
-                url_link = f' · <a href="{s["source_url"]}" target="_blank" style="color:#ef9a9a;">🔗 ver post</a>'
+            base_url = s.get("source_url") or ""
+            trecho = (s.get("trecho_texto") or "").strip()
+            if base_url and trecho:
+                limpo = re.sub(r"[<>{};|]", " ", trecho)
+                limpo = re.sub(r"\s+", " ", limpo).strip()
+                anchor = limpo[:80].strip()
+                href = f"{base_url}#:~:text={_q2(anchor)}" if anchor else base_url
+            else:
+                href = base_url
+
+            preview = trecho[:200] if trecho else "(sem trecho)"
+            cursor_style = "cursor:pointer;" if href else ""
+            click_attrs = f'href="{href}" target="_blank"' if href else 'href="javascript:void(0)"'
+
             st.markdown(
-                f"""<div style="background:#3a1a1a;border-left:3px solid #f44336;padding:8px 12px;margin:4px 0;border-radius:4px;">
-                <strong>🔥 {s['categoria']}</strong> · keyword: <code>{s['palavra_chave']}</code> · <code>+{s['boost']}</code>{url_link}<br>
-                <span style="color:#999;font-size:13px;">"<i>{(s['trecho_texto'] or '')[:200]}</i>"</span>
-                </div>""",
+                f"""<a {click_attrs} style="text-decoration:none;color:inherit;display:block;">
+                <div style="background:#3a1a1a;border-left:3px solid #f44336;padding:10px 12px;margin:6px 0;border-radius:4px;{cursor_style}transition:background 0.15s, transform 0.1s;"
+                     onmouseover="this.style.background='#4d2323';this.style.transform='translateX(2px)';"
+                     onmouseout="this.style.background='#3a1a1a';this.style.transform='translateX(0)';">
+                <strong style="color:#ef9a9a;">🔥 {s['categoria']}</strong>
+                · keyword: <code style="background:#2a0a0a;color:#ef9a9a;padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
+                · <code style="background:#2a0a0a;color:#ef9a9a;padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
+                {"<span style='color:#ef9a9a;font-size:12px;margin-left:6px;'>🔗 abre post com destaque</span>" if href else ""}
+                <br>
+                <span style="color:#999;font-size:13px;">"<i>{preview}</i>"</span>
+                </div>
+                </a>""",
                 unsafe_allow_html=True,
             )
 
@@ -901,7 +966,7 @@ with aba_leads:
     df_grid["nicho"] = df_grid["nicho"].fillna("—")
     df_grid["cidade_tag"] = df_grid["cidade_tag"].fillna("—")
 
-    # Cell renderer pro botao 📋 — click chama setSelectedRows pra dialog abrir
+    # Cell renderer pro botao 📋 — click mostra spinner IMEDIATO + dispara selection
     btn_renderer = JsCode("""
     class BtnRenderer {
         init(params) {
@@ -915,15 +980,54 @@ with aba_leads:
                 transition: background 0.15s, transform 0.1s;
             `;
             this.eGui.onmouseenter = () => {
-                this.eGui.style.background = '#ff8c42';
-                this.eGui.style.transform = 'scale(1.1)';
+                if (!this.eGui.disabled) {
+                    this.eGui.style.background = '#ff8c42';
+                    this.eGui.style.transform = 'scale(1.1)';
+                }
             };
             this.eGui.onmouseleave = () => {
-                this.eGui.style.background = '#ff4b4b';
-                this.eGui.style.transform = 'scale(1)';
+                if (!this.eGui.disabled) {
+                    this.eGui.style.background = '#ff4b4b';
+                    this.eGui.style.transform = 'scale(1)';
+                }
             };
             this.eGui.addEventListener('click', () => {
-                params.node.setSelected(true, true);  // single-select
+                // Feedback visual INSTANTANEO no proprio botao
+                this.eGui.innerHTML = '⏳';
+                this.eGui.style.background = '#666';
+                this.eGui.style.cursor = 'wait';
+                this.eGui.disabled = true;
+                // Tenta mostrar overlay full-page (se sandbox permitir)
+                try {
+                    const tw = window.top || window.parent;
+                    const doc = tw.document;
+                    if (!doc.getElementById('loading-ficha-overlay')) {
+                        const ov = doc.createElement('div');
+                        ov.id = 'loading-ficha-overlay';
+                        ov.style.cssText = `
+                            position: fixed; inset: 0;
+                            background: rgba(0,0,0,0.55);
+                            z-index: 999999;
+                            display: flex; align-items: center; justify-content: center;
+                            color: white; font-size: 28px;
+                            backdrop-filter: blur(2px);
+                        `;
+                        ov.innerHTML = `
+                            <div style="display:flex;flex-direction:column;align-items:center;gap:14px;">
+                              <div style="width:48px;height:48px;border:4px solid #ff4b4b;border-top-color:transparent;border-radius:50%;animation:spinner 0.8s linear infinite;"></div>
+                              <div style="font-size:16px;">Abrindo ficha do lead...</div>
+                            </div>
+                            <style>@keyframes spinner { to { transform: rotate(360deg); } }</style>
+                        `;
+                        doc.body.appendChild(ov);
+                        // Auto-remove apos 5s caso algo trave
+                        setTimeout(() => {
+                            const o = doc.getElementById('loading-ficha-overlay');
+                            if (o) o.remove();
+                        }, 5000);
+                    }
+                } catch (e) { /* sandbox bloqueou, sem problema */ }
+                params.node.setSelected(true, true);
             });
         }
         getGui() { return this.eGui; }
