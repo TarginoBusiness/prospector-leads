@@ -12,7 +12,7 @@ on:
 jobs:
   deep_osint:
     runs-on: ubuntu-latest
-    timeout-minutes: 240   # ate 4h
+    timeout-minutes: 350   # ate 4h
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
