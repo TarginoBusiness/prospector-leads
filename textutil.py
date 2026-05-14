@@ -21,6 +21,13 @@ import re
 import unicodedata
 
 
+def _normalize(text: str) -> str:
+    """Lowercase, sem acento, whitespace colapsado. (versao sem mapa)"""
+    text = unicodedata.normalize("NFKD", text or "")
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", text.lower()).strip()
+
+
 def _normalize_mapped(text: str) -> tuple[str, list[int]]:
     """
     Mesma normalizacao de _normalize() (NFKD, drop combining, lower,
@@ -71,3 +78,25 @@ def trecho_original(text: str, norm: str, nmap: list[int],
     o_start = nmap[start_n]
     o_end = nmap[end_n] + 1
     return re.sub(r"\s+", " ", text[o_start:o_end]).strip()
+
+
+def keyword_como_na_pagina(trecho: str, keyword: str) -> str:
+    """
+    Acha a `keyword` (forma normalizada do config) dentro do `trecho`
+    (texto ORIGINAL) e devolve a keyword EXATAMENTE como aparece na
+    pagina — com acento e maiuscula. Esse eh o melhor texto pra um
+    Chrome Text Fragment: curto, exato, casa = comportamento Ctrl+F.
+    Retorna "" se nao achar.
+    """
+    if not trecho or not keyword:
+        return ""
+    kw_norm = _normalize(keyword)
+    if not kw_norm:
+        return ""
+    tnorm, tmap = _normalize_mapped(trecho)
+    i = tnorm.find(kw_norm)
+    if i == -1 or not tmap:
+        return ""
+    o_start = tmap[i]
+    o_end = tmap[i + len(kw_norm) - 1] + 1
+    return trecho[o_start:o_end].strip()

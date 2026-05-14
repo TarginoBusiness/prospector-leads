@@ -100,7 +100,9 @@ async def visitar(client: httpx.AsyncClient, url: str, max_chars: int = 25000,
                 c = m.attributes.get("content", "")
                 if c:
                     partes.append(c)
-        body = tree.body.text() if tree.body else (tree.text() or "")
+        # separator=" " — poe espaco entre text-nodes, senao "Clinica"+"Agenda"
+        # vira "ClinicaAgenda" e o trecho nunca casa com o Text Fragment do Chrome
+        body = tree.body.text(separator=" ") if tree.body else (tree.text(separator=" ") or "")
         partes.append(body[:max_chars])
         texto = " ".join(partes)
         return (texto, tree) if retornar_tree else texto

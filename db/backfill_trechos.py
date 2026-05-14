@@ -45,7 +45,7 @@ async def baixar_texto(client: httpx.AsyncClient, url: str) -> str:
         tree = HTMLParser(r.text)
         for tag in tree.css("script, style, noscript"):
             tag.decompose()
-        body = tree.body.text() if tree.body else (tree.text() or "")
+        body = tree.body.text(separator=" ") if tree.body else (tree.text(separator=" ") or "")
         return body[:25000]
     except Exception:
         return ""

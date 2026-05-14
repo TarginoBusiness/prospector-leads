@@ -277,40 +277,57 @@ def _wa_url(tel):
     return f"https://wa.me/{clean.lstrip('+')}"
 
 
+def _frag_encode(val: str) -> str:
+    """Percent-encode pra Chrome Text Fragment — encoda tambem - , & que tem
+    significado especial no parser do fragment."""
+    from urllib.parse import quote
+    return quote(val, safe="").replace("-", "%2D").replace("&", "%26")
+
+
 def _text_fragment_url(base_url: str, trecho: str, keyword: str = "") -> str:
     """
-    Monta URL com Chrome Text Fragment robusto pra DESTACAR e SCROLLAR
-    ate a mencao na pagina.
+    Monta URL com Chrome Text Fragment que DESTACA e SCROLLA ate a
+    mencao — igual quando voce aperta Ctrl+F.
 
-    Em vez de um text= unico e gigante (fragil — quebra se tem qualquer
-    <span>/<br> no meio do trecho), usa a forma de RANGE:
-        #:~:text=primeiras palavras,ultimas palavras
-    O Chrome casa do inicio ao fim mesmo com elementos HTML no meio.
-    Se o trecho for curto, manda ele inteiro. Fallback final: a keyword.
+    ESTRATEGIA (do mais confiavel pro menos):
+      1. A keyword EXATAMENTE como aparece na pagina (com acento/maiuscula).
+         Curta, exata, num unico text-node → casa quase sempre. Eh
+         literalmente o comportamento do Ctrl+F.
+      2. Forma de RANGE (text=inicio,fim) — robusta a <span>/<br> no meio.
+      3. So a URL, sem fragment.
+
+    Chrome casa case-insensitive mas eh SENSIVEL a acento — por isso a
+    keyword tem que vir do texto da pagina, nao da forma normalizada
+    do config.
     """
-    from urllib.parse import quote
+    from textutil import keyword_como_na_pagina
 
     if not base_url:
         return ""
-    # limpa caracteres que quebram a URL/fragment
-    limpo = re.sub(r"[<>{}|\\#]", " ", trecho or "")
+    base_url = base_url.split("#")[0]  # tira fragment pre-existente
+    trecho = (trecho or "").strip()
+
+    # 1. keyword exata como na pagina
+    kw_pagina = keyword_como_na_pagina(trecho, keyword)
+    if kw_pagina:
+        return f"{base_url}#:~:text={_frag_encode(kw_pagina)}"
+
+    # 2. range com inicio/fim do trecho
+    limpo = re.sub(r"[<>{}|\\#]", " ", trecho)
     limpo = re.sub(r"\s+", " ", limpo).strip()
-
-    def _frag(val: str) -> str:
-        # vírgula e hífen têm significado especial no text fragment → encode
-        return quote(val, safe="")
-
     if limpo:
         palavras = limpo.split(" ")
-        if len(palavras) <= 8:
-            return f"{base_url}#:~:text={_frag(limpo)}"
-        start = " ".join(palavras[:5])
-        end = " ".join(palavras[-4:])
-        return f"{base_url}#:~:text={_frag(start)},{_frag(end)}"
+        if len(palavras) <= 6:
+            return f"{base_url}#:~:text={_frag_encode(limpo)}"
+        start = " ".join(palavras[:4])
+        end = " ".join(palavras[-3:])
+        return f"{base_url}#:~:text={_frag_encode(start)},{_frag_encode(end)}"
+
+    # 3. fallback: keyword crua (pode nao casar se a pagina tem acento)
     if keyword:
         kw = re.sub(r"\s+", " ", keyword).strip()
         if kw:
-            return f"{base_url}#:~:text={_frag(kw)}"
+            return f"{base_url}#:~:text={_frag_encode(kw)}"
     return base_url
 
 
