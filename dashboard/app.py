@@ -498,7 +498,7 @@ def render_progress_bar(label: str, pct: float, sub: str = "") -> None:
 
 # ============== Data loaders ==============
 
-@st.cache_data(ttl=5, show_spinner=False)
+@st.cache_data(ttl=15, show_spinner=False)
 def load_leads_compact() -> pd.DataFrame:
     """Versao reduzida pro live panel — so o que ele mostra."""
     sql = """
@@ -514,7 +514,7 @@ def load_leads_compact() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def load_leads_full() -> pd.DataFrame:
     """Versao completa pra tabela principal — cache maior pq nao precisa live."""
     sql = """
@@ -949,42 +949,80 @@ with aba_leads:
     }
     """)
 
-    # Score progress bar renderer (HTML gradient)
+    # Score progress bar — CLASS renderer (constroi DOM, nao retorna string)
     score_renderer = JsCode("""
-    function(params) {
-        const score = params.value || 0;
-        let grad, prefix;
-        if (score >= 90) { prefix = '🔥 '; grad = 'linear-gradient(90deg,#ff4b4b,#ff8c42)'; }
-        else if (score >= 60) { prefix = ''; grad = 'linear-gradient(90deg,#ff8c42,#ffa726)'; }
-        else if (score >= 30) { prefix = ''; grad = 'linear-gradient(90deg,#fbc02d,#fdd835)'; }
-        else { prefix = ''; grad = 'linear-gradient(90deg,#546e7a,#78909c)'; }
-        return `<div style="background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;margin-top:3px;">
-            <div style="background:${grad};height:100%;width:${score}%;"></div>
-            <div style="position:absolute;top:0;left:0;right:0;text-align:center;line-height:18px;font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.7);">${prefix}${score}%</div>
-        </div>`;
-    }
-    """)
-
-    # Sinais renderer (count + categorias)
-    sinais_renderer = JsCode("""
-    function(params) {
-        const count = params.data.interest_count || 0;
-        const cats = params.data.interest_categorias || '';
-        if (count > 0) {
-            const catsPart = cats ? `<span style="color:#888;font-size:10px;display:block;line-height:1.2;margin-top:2px;">(${cats})</span>` : '';
-            return `<span style="color:#4caf50;font-weight:600;">🎯 ${count}</span>${catsPart}`;
+    class ScoreRenderer {
+        init(params) {
+            const score = params.value || 0;
+            let grad, prefix;
+            if (score >= 90) { prefix = '🔥 '; grad = 'linear-gradient(90deg,#ff4b4b,#ff8c42)'; }
+            else if (score >= 60) { prefix = ''; grad = 'linear-gradient(90deg,#ff8c42,#ffa726)'; }
+            else if (score >= 30) { prefix = ''; grad = 'linear-gradient(90deg,#fbc02d,#fdd835)'; }
+            else { prefix = ''; grad = 'linear-gradient(90deg,#546e7a,#78909c)'; }
+            this.eGui = document.createElement('div');
+            this.eGui.style.cssText = 'background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;margin-top:3px;min-width:80px;';
+            const fill = document.createElement('div');
+            fill.style.cssText = `background:${grad};height:100%;width:${score}%;`;
+            const label = document.createElement('div');
+            label.style.cssText = 'position:absolute;top:0;left:0;right:0;text-align:center;line-height:18px;font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.7);';
+            label.textContent = `${prefix}${score}%`;
+            this.eGui.appendChild(fill);
+            this.eGui.appendChild(label);
         }
-        return '<span style="color:#555;">○ 0</span>';
+        getGui() { return this.eGui; }
+        refresh() { return false; }
     }
     """)
 
-    # Telefone renderer (clicavel pro wa.me)
+    # Sinais — CLASS renderer
+    sinais_renderer = JsCode("""
+    class SinaisRenderer {
+        init(params) {
+            const count = params.data.interest_count || 0;
+            const cats = params.data.interest_categorias || '';
+            this.eGui = document.createElement('div');
+            if (count > 0) {
+                const numSpan = document.createElement('span');
+                numSpan.style.cssText = 'color:#4caf50;font-weight:600;';
+                numSpan.textContent = `🎯 ${count}`;
+                this.eGui.appendChild(numSpan);
+                if (cats) {
+                    const catsSpan = document.createElement('span');
+                    catsSpan.style.cssText = 'color:#888;font-size:10px;display:block;line-height:1.2;margin-top:2px;';
+                    catsSpan.textContent = `(${cats})`;
+                    this.eGui.appendChild(catsSpan);
+                }
+            } else {
+                this.eGui.innerHTML = '';
+                this.eGui.style.color = '#555';
+                this.eGui.textContent = '○ 0';
+            }
+        }
+        getGui() { return this.eGui; }
+        refresh() { return false; }
+    }
+    """)
+
+    # Telefone — CLASS renderer (link clicavel pro wa.me)
     tel_renderer = JsCode("""
-    function(params) {
-        const tel = params.value;
-        if (!tel || tel === '—') return '<span style="color:#555;">—</span>';
-        const clean = tel.replace(/[^\\d\\+]/g, '').replace(/^\\+/, '');
-        return `<a href="https://wa.me/${clean}" target="_blank" style="color:#4caf50;text-decoration:none;">${tel}</a>`;
+    class TelRenderer {
+        init(params) {
+            const tel = params.value;
+            if (!tel || tel === '—' || tel === '') {
+                this.eGui = document.createElement('span');
+                this.eGui.style.color = '#555';
+                this.eGui.textContent = '—';
+            } else {
+                this.eGui = document.createElement('a');
+                const clean = String(tel).replace(/[^\\d+]/g, '').replace(/^\\+/, '');
+                this.eGui.href = 'https://wa.me/' + clean;
+                this.eGui.target = '_blank';
+                this.eGui.style.cssText = 'color:#4caf50;text-decoration:none;';
+                this.eGui.textContent = tel;
+            }
+        }
+        getGui() { return this.eGui; }
+        refresh() { return false; }
     }
     """)
 
