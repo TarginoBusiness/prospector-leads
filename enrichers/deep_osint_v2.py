@@ -46,6 +46,7 @@ class DeepOsintV2Result:
     facebook_url: str = ""
     site_url: str = ""
     linkedin_url: str = ""
+    tiktok_url: str = ""
     vaga_urls: list = field(default_factory=list)
     cnpj_data: dict = field(default_factory=dict)
     # contatos colhidos das paginas visitadas (email/telefone/whatsapp)
@@ -148,15 +149,72 @@ def _extrair_links_internos(tree: HTMLParser, base: str, dominio: str,
     return [u for _, u in candidatos[:max_links]]
 
 
-async def coletar_site(client: httpx.AsyncClient, site_url: str) -> dict:
+# Links que NAO sao perfil de empresa (post, share, login, etc)
+_SOCIAL_BLACKLIST = (
+    "/p/", "/reel", "/explore", "/stories", "/tv/", "/sharer", "/share.php",
+    "/plugins", "/dialog", "/login", "/accounts", "facebook.com/tr",
+    "/hashtag/", "/events/", "/photo", "/posts/", "intent/", "/watch",
+)
+
+
+def _eh_perfil_social(url: str, plat: str) -> bool:
+    low = url.lower()
+    if any(b in low for b in _SOCIAL_BLACKLIST):
+        return False
+    if plat == "linkedin":
+        return "/company/" in low or "/in/" in low
+    if plat == "instagram":
+        m = re.search(r"instagram\.com/([^/?#]+)", low)
+        return bool(m) and len(m.group(1)) >= 2 and m.group(1) not in ("explore", "accounts")
+    if plat == "facebook":
+        m = re.search(r"facebook\.com/([^/?#]+)", low)
+        return bool(m) and len(m.group(1)) >= 2 and m.group(1) not in ("pages", "groups", "events")
+    if plat == "tiktok":
+        return "tiktok.com/@" in low
+    return False
+
+
+def _extrair_social_links(trees: list) -> dict:
+    """
+    Varre o HTML das paginas visitadas procurando link pro Instagram,
+    Facebook, LinkedIn, TikTok da empresa — geralmente no cabecalho,
+    rodape ou aba de contato. Retorna {plataforma: url} do 1o valido.
+    """
+    plats = {
+        "instagram": "instagram.com",
+        "facebook": "facebook.com",
+        "linkedin": "linkedin.com",
+        "tiktok": "tiktok.com",
+    }
+    out: dict[str, str] = {}
+    for tree in trees:
+        if tree is None:
+            continue
+        for a in tree.css("a"):
+            href = (a.attributes.get("href") or "").strip()
+            low = href.lower()
+            if not low.startswith("http"):
+                continue
+            for plat, dom in plats.items():
+                if plat in out or dom not in low:
+                    continue
+                if _eh_perfil_social(href, plat):
+                    out[plat] = href.split("?")[0].rstrip("/")
+        if len(out) == len(plats):
+            break
+    return out
+
+
+async def coletar_site(client: httpx.AsyncClient, site_url: str) -> tuple[dict, dict]:
     """
     Visita a HOME, le os links REAIS do site, e segue ate 6 paginas
-    internas relevantes (sobre, servicos, vagas, blog...).
-    Antes chutava paths fixos (/sobre, /servicos) que davam 404 na maioria.
-    Retorna {url_completa: texto} — cada pagina com sua URL exata.
+    internas relevantes (sobre, servicos, vagas, contato, blog...).
+    Em CADA pagina tambem varre o HTML procurando perfil social
+    (Instagram/Facebook/LinkedIn/TikTok) — fica facil achar na aba contato.
+    Retorna ({url: texto}, {plataforma: url_do_perfil}).
     """
     if not site_url:
-        return {}
+        return {}, {}
     if not site_url.startswith(("http://", "https://")):
         site_url = "https://" + site_url
     parsed = urlparse(site_url)
@@ -165,18 +223,24 @@ async def coletar_site(client: httpx.AsyncClient, site_url: str) -> dict:
 
     home_texto, home_tree = await visitar(client, base, retornar_tree=True)
     out: dict[str, str] = {}
+    trees: list = [home_tree]
     if home_texto and len(home_texto) > 50:
         out[base] = home_texto
     if home_tree is None:
-        return out
+        return out, {}
 
     internos = _extrair_links_internos(home_tree, base, dominio, max_links=6)
     if internos:
-        textos = await asyncio.gather(*[visitar(client, u) for u in internos])
-        for u, t in zip(internos, textos):
+        resultados = await asyncio.gather(
+            *[visitar(client, u, retornar_tree=True) for u in internos]
+        )
+        for u, (t, tree) in zip(internos, resultados):
+            trees.append(tree)
             if t and len(t) > 50:
                 out[u] = t
-    return out
+
+    socials = _extrair_social_links(trees)
+    return out, socials
 
 
 # ============================================================================
@@ -292,16 +356,26 @@ async def aprofundar_v2(
             paginas_pra_visitar.append(("vaga", vu))
 
         # Visita site (multi-pagina) + as outras paginas, tudo paralelo
-        site_task = coletar_site(client, site_url) if site_url else _empty_dict()
+        site_task = coletar_site(client, site_url) if site_url else _empty_site()
         outras_tasks = [visitar(client, u) for _, u in paginas_pra_visitar]
-        site_dict, *outras_textos = await asyncio.gather(site_task, *outras_tasks)
+        site_result, *outras_textos = await asyncio.gather(site_task, *outras_tasks)
 
-        # textos_por_url: cada URL com seu texto
-        if isinstance(site_dict, dict):
-            for u, t in site_dict.items():
-                res.textos_por_url[u] = t
-            if site_dict:
-                res.fontes_consultadas.append("site")
+        # site_result = (textos_dict, socials_dict)
+        site_dict, site_socials = site_result if isinstance(site_result, tuple) else ({}, {})
+        for u, t in site_dict.items():
+            res.textos_por_url[u] = t
+        if site_dict:
+            res.fontes_consultadas.append("site")
+
+        # Perfis sociais achados no HTML do site (cabecalho/rodape/contato).
+        # So preenche o que ainda nao tinhamos vindo do enrich/DDG.
+        if site_socials.get("instagram") and not res.instagram_url:
+            res.instagram_url = site_socials["instagram"]
+        if site_socials.get("facebook") and not res.facebook_url:
+            res.facebook_url = site_socials["facebook"]
+        if site_socials.get("linkedin") and not res.linkedin_url:
+            res.linkedin_url = site_socials["linkedin"]
+        res.tiktok_url = site_socials.get("tiktok", "")
 
         for (fonte, url), texto in zip(paginas_pra_visitar, outras_textos):
             if texto and len(texto) > 50:
@@ -339,12 +413,22 @@ async def aprofundar_v2(
             log.debug(f"cnpj falhou: {e}")
 
     # ---- DETECCAO: roda SO no conteudo de paginas reais ----
+    # DEDUP: a mesma frase repetida (mesma categoria + keyword + trecho) NAO
+    # conta como sinal novo — varias paginas do site repetem o mesmo rodape.
     all_sinais = []
     categorias_aplicadas = set()
+    sinais_vistos: set = set()
     boost_total = 0
     for url, texto in res.textos_por_url.items():
         sinais_da_pagina, _ = detect(texto)
         for s in sinais_da_pagina:
+            # chave de dedup: categoria + keyword + trecho normalizado
+            chave = (s.categoria, s.palavra_chave,
+                     re.sub(r"\s+", " ", (s.trecho or "").lower()).strip())
+            if chave in sinais_vistos:
+                continue
+            sinais_vistos.add(chave)
+
             s.source_url = url  # URL REAL E VERIFICAVEL da pagina onde foi visto
             # source_name = tipo de fonte (deduz da url)
             if "linkedin.com" in url:
@@ -374,8 +458,8 @@ async def aprofundar_v2(
     return res
 
 
-async def _empty_dict() -> dict:
-    return {}
+async def _empty_site() -> tuple[dict, dict]:
+    return {}, {}
 
 
 # CNPJ no formato XX.XXX.XXX/XXXX-XX — a barra obrigatoria evita falso

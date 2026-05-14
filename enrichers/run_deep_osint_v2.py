@@ -129,6 +129,12 @@ async def main(limit: int = 1000) -> None:
 
         # Salva sinais (com source_url real pra cada um)
         with get_conn() as c, c.cursor() as cur:
+            # DEDUP no banco: re-rodar um lead REPÕE os sinais de interesse dele
+            # (senão acumula a mesma frase a cada run). Intent dos scrapers fica.
+            cur.execute(
+                "DELETE FROM intent_signals WHERE lead_id = %s AND categoria LIKE 'interest_%%'",
+                (lead["id"],),
+            )
             for s in r.sinais:
                 cur.execute(
                     SQL_INSERT_INTEREST,
@@ -143,6 +149,9 @@ async def main(limit: int = 1000) -> None:
                 new_socials += 1
             if r.facebook_url:
                 cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "facebook", r.facebook_url, 85))
+                new_socials += 1
+            if r.tiktok_url:
+                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "tiktok", r.tiktok_url, 80))
                 new_socials += 1
             if r.site_url:
                 cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "site", r.site_url, 90))
