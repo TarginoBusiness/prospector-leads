@@ -15,6 +15,8 @@ from pathlib import Path
 
 import yaml
 
+from textutil import _normalize_mapped, trecho_original
+
 
 @dataclass
 class InterestSignal:
@@ -57,14 +59,16 @@ def detect(text: str) -> tuple[list[InterestSignal], int]:
     1 hit por categoria conta o boost dela. Multiplas categorias somam.
 
     Matching por WORD BOUNDARY (regex \\b) — keyword tem que ser palavra
-    inteira, nao substring. Trecho extraido do texto NORMALIZADO (indices
-    corretos — bug antigo extraia do texto original com indices do norm).
+    inteira, nao substring. O MATCH roda no texto normalizado, mas o
+    `trecho` salvo eh recortado do texto ORIGINAL (com acento e maiuscula)
+    via mapa de indices — assim o Chrome Text Fragment do dashboard
+    consegue destacar/scrollar ate a mencao na pagina real.
     """
     if not text:
         return [], 0
 
     cfg = load_config()
-    norm = _normalize(text)
+    norm, nmap = _normalize_mapped(text)
 
     sinais: list[InterestSignal] = []
     boost_por_categoria: dict[str, int] = {}
@@ -78,8 +82,8 @@ def detect(text: str) -> tuple[list[InterestSignal], int]:
             m = _kw_pattern(kw_norm).search(norm)
             if m:
                 idx = m.start()
-                # Trecho extraido do NORM (indices corretos, sem acento mas legivel)
-                trecho = norm[max(0, idx - 45): idx + len(kw_norm) + 65].strip()
+                # Trecho recortado do texto ORIGINAL (acento + maiuscula intactos)
+                trecho = trecho_original(text, norm, nmap, idx, len(kw_norm))
                 sinais.append(
                     InterestSignal(
                         categoria=cat,

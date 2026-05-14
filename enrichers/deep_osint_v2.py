@@ -65,16 +65,30 @@ COMMON_HEADERS = {
 # Visita de paginas — retorna (url, texto). detect() roda nisso.
 # ============================================================================
 
-async def visitar(client: httpx.AsyncClient, url: str, max_chars: int = 25000) -> str:
-    """Visita URL, retorna texto limpo. Timeout curto."""
+# Palavras que, no href ou no texto do link, indicam pagina interna relevante
+LINK_RELEVANTE = (
+    "sobre", "quem-somos", "quemsomos", "empresa", "servico", "servicos",
+    "solucoes", "solucao", "produto", "produtos", "vaga", "vagas",
+    "trabalhe", "carreira", "carreiras", "oportunidade", "blog", "noticia",
+    "noticias", "contato", "fale-conosco", "tecnologia", "inovacao", "digital",
+)
+
+
+async def visitar(client: httpx.AsyncClient, url: str, max_chars: int = 25000,
+                  retornar_tree: bool = False):
+    """
+    Visita URL, retorna texto limpo. Timeout curto.
+    Se retornar_tree=True, retorna (texto, HTMLParser) pra extrair links.
+    """
+    vazio = ("", None) if retornar_tree else ""
     if not url:
-        return ""
+        return vazio
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     try:
         r = await client.get(url, timeout=8.0, follow_redirects=True)
         if r.status_code != 200:
-            return ""
+            return vazio
         tree = HTMLParser(r.text)
         # Remove tags de script/style ANTES de extrair texto (evita pegar JS!)
         for tag in tree.css("script, style, noscript"):
@@ -88,14 +102,52 @@ async def visitar(client: httpx.AsyncClient, url: str, max_chars: int = 25000) -
                     partes.append(c)
         body = tree.body.text() if tree.body else (tree.text() or "")
         partes.append(body[:max_chars])
-        return " ".join(partes)
+        texto = " ".join(partes)
+        return (texto, tree) if retornar_tree else texto
     except Exception:
-        return ""
+        return vazio
+
+
+def _extrair_links_internos(tree: HTMLParser, base: str, dominio: str,
+                            max_links: int = 6) -> list[str]:
+    """
+    Da home, extrai links internos (mesmo dominio) que parecem relevantes
+    (sobre, servicos, vagas, blog...). Ordena: link relevante primeiro.
+    Substitui o chute de paths fixos — usa os links REAIS do site.
+    """
+    from urllib.parse import urljoin
+
+    candidatos: list[tuple[int, str]] = []
+    vistos: set[str] = set()
+    for a in tree.css("a"):
+        href = (a.attributes.get("href") or "").strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        full = urljoin(base + "/", href)
+        full = full.split("#")[0].rstrip("/")
+        p = urlparse(full)
+        if p.scheme not in ("http", "https") or dominio not in p.netloc:
+            continue
+        if full in vistos or full.rstrip("/") == base.rstrip("/"):
+            continue
+        # ignora arquivos / midia
+        if re.search(r"\.(pdf|jpe?g|png|gif|svg|zip|mp4|webp)$", p.path, re.I):
+            continue
+        vistos.add(full)
+        alvo = (p.path + " " + (a.text() or "")).lower()
+        score = 1 if any(k in alvo for k in LINK_RELEVANTE) else 0
+        candidatos.append((score, full))
+
+    # relevantes primeiro, mantem ordem de aparicao dentro de cada grupo
+    candidatos.sort(key=lambda x: -x[0])
+    return [u for _, u in candidatos[:max_links]]
 
 
 async def coletar_site(client: httpx.AsyncClient, site_url: str) -> dict:
     """
-    Visita home + /sobre + /servicos + /vagas + /trabalhe-conosco.
+    Visita a HOME, le os links REAIS do site, e segue ate 6 paginas
+    internas relevantes (sobre, servicos, vagas, blog...).
+    Antes chutava paths fixos (/sobre, /servicos) que davam 404 na maioria.
     Retorna {url_completa: texto} — cada pagina com sua URL exata.
     """
     if not site_url:
@@ -104,10 +156,22 @@ async def coletar_site(client: httpx.AsyncClient, site_url: str) -> dict:
         site_url = "https://" + site_url
     parsed = urlparse(site_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
-    paths = ["", "/sobre", "/servicos", "/vagas", "/trabalhe-conosco", "/carreiras", "/blog"]
-    urls = [base + p for p in paths]
-    textos = await asyncio.gather(*[visitar(client, u) for u in urls])
-    return {u: t for u, t in zip(urls, textos) if t and len(t) > 50}
+    dominio = parsed.netloc.replace("www.", "")
+
+    home_texto, home_tree = await visitar(client, base, retornar_tree=True)
+    out: dict[str, str] = {}
+    if home_texto and len(home_texto) > 50:
+        out[base] = home_texto
+    if home_tree is None:
+        return out
+
+    internos = _extrair_links_internos(home_tree, base, dominio, max_links=6)
+    if internos:
+        textos = await asyncio.gather(*[visitar(client, u) for u in internos])
+        for u, t in zip(internos, textos):
+            if t and len(t) > 50:
+                out[u] = t
+    return out
 
 
 # ============================================================================

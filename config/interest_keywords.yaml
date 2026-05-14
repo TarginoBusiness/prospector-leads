@@ -58,6 +58,25 @@ categorias:
       - atendimento 24h
       - resposta automatica
       - menu interativo whatsapp
+      - atendimento via whatsapp
+      - atendimento pelo whatsapp
+      - fale conosco pelo whatsapp
+      - chame no whatsapp
+      - agende pelo whatsapp
+
+  agendamento_online:
+    descricao: "Empresa ja tem presenca digital ativa (agenda online) — fruto baixo, otimo prospecto pra automacao de atendimento"
+    boost: 25
+    palavras:
+      - agendamento online
+      - agende online
+      - agende sua consulta
+      - agende sua avaliacao
+      - marque sua consulta
+      - agendamento pela internet
+      - agende seu horario
+      - reserva online
+      - formulario de contato
 
   vaga_tech:
     descricao: "Empresa tem vaga aberta de tech (vai contratar dev/TI = comprar tech)"
@@ -74,6 +93,21 @@ categorias:
       - contratamos desenvolvedor
       - estagio tecnologia
       - software house
+
+  vaga_atendimento:
+    descricao: "Empresa contratando atendente/recepcao/SAC = carga de atendimento manual alta = prospecto perfeito pra automacao"
+    boost: 35
+    palavras:
+      - vaga atendente
+      - vaga de atendente
+      - vaga recepcionista
+      - vaga de recepcionista
+      - vaga sac
+      - vaga call center
+      - vaga teleatendimento
+      - contratamos atendente
+      - vaga assistente administrativo
+      - vaga secretaria
 
   site_modernizacao:
     descricao: "Empresa esta atualizando/refazendo presenca digital"

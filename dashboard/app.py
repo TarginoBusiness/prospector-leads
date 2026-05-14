@@ -277,6 +277,43 @@ def _wa_url(tel):
     return f"https://wa.me/{clean.lstrip('+')}"
 
 
+def _text_fragment_url(base_url: str, trecho: str, keyword: str = "") -> str:
+    """
+    Monta URL com Chrome Text Fragment robusto pra DESTACAR e SCROLLAR
+    ate a mencao na pagina.
+
+    Em vez de um text= unico e gigante (fragil — quebra se tem qualquer
+    <span>/<br> no meio do trecho), usa a forma de RANGE:
+        #:~:text=primeiras palavras,ultimas palavras
+    O Chrome casa do inicio ao fim mesmo com elementos HTML no meio.
+    Se o trecho for curto, manda ele inteiro. Fallback final: a keyword.
+    """
+    from urllib.parse import quote
+
+    if not base_url:
+        return ""
+    # limpa caracteres que quebram a URL/fragment
+    limpo = re.sub(r"[<>{}|\\#]", " ", trecho or "")
+    limpo = re.sub(r"\s+", " ", limpo).strip()
+
+    def _frag(val: str) -> str:
+        # vírgula e hífen têm significado especial no text fragment → encode
+        return quote(val, safe="")
+
+    if limpo:
+        palavras = limpo.split(" ")
+        if len(palavras) <= 8:
+            return f"{base_url}#:~:text={_frag(limpo)}"
+        start = " ".join(palavras[:5])
+        end = " ".join(palavras[-4:])
+        return f"{base_url}#:~:text={_frag(start)},{_frag(end)}"
+    if keyword:
+        kw = re.sub(r"\s+", " ", keyword).strip()
+        if kw:
+            return f"{base_url}#:~:text={_frag(kw)}"
+    return base_url
+
+
 @st.dialog("📋 Ficha completa do lead", width="large")
 def show_lead_dialog(lead_id: int) -> None:
     # Remove overlay de loading (injetado pelo btn_renderer no AgGrid)
@@ -359,21 +396,12 @@ def show_lead_dialog(lead_id: int) -> None:
     if interest:
         st.markdown("#### 🎯 Sinais de interesse detectados (Deep OSINT)")
         st.caption("👆 Clica em **🔗 Abrir fonte** pra ver a página (Chrome destaca o trecho em amarelo via text fragments).")
-        from urllib.parse import quote as _q
         for s in interest:
             cat = s["categoria"].replace("interest_", "")
             base_url = s.get("source_url") or ""
             trecho = (s.get("trecho_texto") or "").strip()
-            # URL com text fragment do Chrome (#:~:text=...)
-            href = ""
-            if base_url:
-                if trecho:
-                    limpo = re.sub(r"[<>{};|]", " ", trecho)
-                    limpo = re.sub(r"\s+", " ", limpo).strip()
-                    anchor = limpo[:80].strip()
-                    href = f"{base_url}#:~:text={_q(anchor)}" if anchor else base_url
-                else:
-                    href = base_url
+            # URL com Chrome Text Fragment robusto (range start,end → destaca + scrolla)
+            href = _text_fragment_url(base_url, trecho, s.get("palavra_chave", ""))
 
             preview = trecho[:200] if trecho else "(sem trecho)"
             # Link CTA dentro do card (não envolve div — Streamlit não sanitiza)
@@ -404,19 +432,10 @@ def show_lead_dialog(lead_id: int) -> None:
     if intent_actual:
         st.markdown("#### 🔥 Intent declarado (post pedindo serviço)")
         st.caption("👆 Clica em **🔗 Abrir post** pra ver a página original.")
-        from urllib.parse import quote as _q2
         for s in intent_actual:
             base_url = s.get("source_url") or ""
             trecho = (s.get("trecho_texto") or "").strip()
-            href = ""
-            if base_url:
-                if trecho:
-                    limpo = re.sub(r"[<>{};|]", " ", trecho)
-                    limpo = re.sub(r"\s+", " ", limpo).strip()
-                    anchor = limpo[:80].strip()
-                    href = f"{base_url}#:~:text={_q2(anchor)}" if anchor else base_url
-                else:
-                    href = base_url
+            href = _text_fragment_url(base_url, trecho, s.get("palavra_chave", ""))
 
             preview = trecho[:200] if trecho else "(sem trecho)"
             link_html = (

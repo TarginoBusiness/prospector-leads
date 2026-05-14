@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from scoring.config_loader import load_intent_keywords
+from textutil import _normalize_mapped, trecho_original
 
 
 @dataclass
@@ -36,13 +37,15 @@ def detect(text: str) -> tuple[list[IntentSignal], int]:
     Retorna (lista de sinais, boost total aplicado com teto).
 
     Matching por WORD BOUNDARY (\\b) — keyword tem que ser palavra inteira,
-    nao substring. Trecho extraido do texto NORMALIZADO (indices corretos).
+    nao substring. O match roda no texto normalizado, mas o `trecho` eh
+    recortado do texto ORIGINAL (acento + maiuscula) via mapa de indices,
+    pra o Chrome Text Fragment do dashboard conseguir destacar na pagina.
     """
     if not text:
         return [], 0
 
     cfg = load_intent_keywords()
-    norm = _normalize(text)
+    norm, nmap = _normalize_mapped(text)
 
     sinais: list[IntentSignal] = []
     boost_por_categoria: dict[str, int] = {}
@@ -56,7 +59,7 @@ def detect(text: str) -> tuple[list[IntentSignal], int]:
             m = _kw_pattern(kw_norm).search(norm)
             if m:
                 idx = m.start()
-                trecho = norm[max(0, idx - 45): idx + len(kw_norm) + 65].strip()
+                trecho = trecho_original(text, norm, nmap, idx, len(kw_norm))
                 sinais.append(
                     IntentSignal(
                         categoria=cat,
