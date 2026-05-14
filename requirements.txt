@@ -4,8 +4,8 @@
 python-dotenv==1.0.1
 pyyaml==6.0.2
 
-# Banco
-psycopg[binary]==3.2.3
+# Banco (binary = sem compilar; pool = conexoes quentes, mata o delay)
+psycopg[binary,pool]==3.2.3
 
 # Dashboard
 streamlit==1.41.1

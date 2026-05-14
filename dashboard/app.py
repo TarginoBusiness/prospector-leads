@@ -343,6 +343,15 @@ def _text_fragment_url(base_url: str, trecho: str, keyword: str = "") -> str:
     return base_url
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _score_min_max() -> tuple[int, int]:
+    """Min/max do score — cacheado 60s pra ficha abrir instantanea."""
+    with get_conn() as c, c.cursor() as cur:
+        cur.execute("SELECT MIN(score_temperatura), MAX(score_temperatura) FROM leads")
+        mn, mx = cur.fetchone()
+    return (mn or 0), (mx or 100)
+
+
 @st.dialog("📋 Ficha completa do lead", width="large")
 def show_lead_dialog(lead_id: int) -> None:
     # Remove overlay de loading (injetado pelo btn_renderer no AgGrid)
@@ -365,15 +374,11 @@ def show_lead_dialog(lead_id: int) -> None:
 
     # Cabecalho — mostra raw + relativo
     raw_score = int(lead["score_temperatura"])
-    # Calcula relativo na hora baseado em todos os leads
+    # Calcula relativo baseado no min/max — cacheado pra abrir a ficha rapido
     try:
-        with get_conn() as c, c.cursor() as cur:
-            cur.execute("SELECT MIN(score_temperatura), MAX(score_temperatura) FROM leads")
-            mn, mx = cur.fetchone()
-            mn = mn or 0
-            mx = mx or 100
-            rng = max(mx - mn, 1)
-            rel_score = int(round(10 + 90 * (raw_score - mn) / rng))
+        mn, mx = _score_min_max()
+        rng = max(mx - mn, 1)
+        rel_score = int(round(10 + 90 * (raw_score - mn) / rng))
     except Exception:
         rel_score = raw_score
 
