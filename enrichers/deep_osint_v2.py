@@ -1,18 +1,24 @@
 """
-Deep OSINT v2 — orquestrador aprofundado (REESCRITO v2.1).
+Deep OSINT v2.2 — orquestrador aprofundado (REESCRITO).
 
-LICAO APRENDIDA: a v2.0 fazia ~7 buscas DuckDuckGo POR LEAD (achar perfil
-IG + TikTok + Twitter + LinkedIn + CNPJ + news + reclame). DDG bloqueou
-apos ~30 requests → todas as fontes falhavam → 0 sinais + 80s/lead.
+LICOES APRENDIDAS:
+- v2.0: 7 buscas DDG/lead → DDG bloqueou → 0 sinais.
+- v2.1: rodava detect() na RESPOSTA do DDG → DDG ecoa a query de volta
+  ("no results found for: <query>") e a query continha as keywords →
+  AUTO-CONTAMINACAO, false positives em massa.
 
-ESTRATEGIA v2.1:
-- NAO re-descobre perfis via DDG. Usa o site/Instagram/Facebook que o
-  enrich_gmaps JA achou e guardou em raw_payload.deep_enrich.
-- Visita esses perfis DIRETO (sem DDG).
-- BrasilAPI = API direta, sem DDG.
-- 1 dork DDG MAXIMO por lead (so pra interest keywords + news).
-- Timeout 8s (era 15s) → falhas sao rapidas.
-- Resultado esperado: ~5-10s/lead, sem rate-limit.
+ESTRATEGIA v2.2 — PRINCIPIO FUNDAMENTAL:
+  detect() SO roda em CONTEUDO REAL de PAGINAS VISITADAS.
+  Cada sinal aponta pra URL REAL e VERIFICAVEL.
+  DDG eh usado APENAS pra DESCOBRIR URLs — nunca pra detectar.
+
+FONTES (todas com source_url verificavel):
+  1. Site oficial (URL conhecida do enrich) — visita home + /sobre + /vagas
+  2. Instagram (URL conhecida) — visita bio
+  3. Facebook (URL conhecida) — visita pagina
+  4. LinkedIn company (descoberto via dork → VISITA a pagina)
+  5. Paginas de vaga (descobertas via dork → VISITA cada uma)
+  6. CNPJ via BrasilAPI (dado estruturado, source = brasilapi)
 """
 from __future__ import annotations
 
@@ -20,7 +26,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -38,10 +44,11 @@ class DeepOsintV2Result:
     instagram_url: str = ""
     facebook_url: str = ""
     site_url: str = ""
+    linkedin_url: str = ""
+    vaga_urls: list = field(default_factory=list)
     cnpj_data: dict = field(default_factory=dict)
-    news_urls: list = field(default_factory=list)
-    reclame_aqui: dict = field(default_factory=dict)
-    textos: dict = field(default_factory=dict)
+    # textos_por_url: {url: texto} — cada texto vira detect com source_url=url
+    textos_por_url: dict = field(default_factory=dict)
     fontes_consultadas: list[str] = field(default_factory=list)
 
 
@@ -55,11 +62,11 @@ COMMON_HEADERS = {
 
 
 # ============================================================================
-# Coletores DIRETOS (sem DDG) — usam URLs que ja temos
+# Visita de paginas — retorna (url, texto). detect() roda nisso.
 # ============================================================================
 
-async def _visitar_url(client: httpx.AsyncClient, url: str, max_chars: int = 30000) -> str:
-    """Visita uma URL e retorna o texto. Timeout curto pra falhar rapido."""
+async def visitar(client: httpx.AsyncClient, url: str, max_chars: int = 25000) -> str:
+    """Visita URL, retorna texto limpo. Timeout curto."""
     if not url:
         return ""
     if not url.startswith(("http://", "https://")):
@@ -69,7 +76,9 @@ async def _visitar_url(client: httpx.AsyncClient, url: str, max_chars: int = 300
         if r.status_code != 200:
             return ""
         tree = HTMLParser(r.text)
-        # Pega meta description + texto do body
+        # Remove tags de script/style ANTES de extrair texto (evita pegar JS!)
+        for tag in tree.css("script, style, noscript"):
+            tag.decompose()
         partes = []
         for sel in ["meta[name='description']", "meta[property='og:description']", "meta[property='og:title']"]:
             m = tree.css_first(sel)
@@ -77,78 +86,67 @@ async def _visitar_url(client: httpx.AsyncClient, url: str, max_chars: int = 300
                 c = m.attributes.get("content", "")
                 if c:
                     partes.append(c)
-        body = tree.text() or ""
+        body = tree.body.text() if tree.body else (tree.text() or "")
         partes.append(body[:max_chars])
         return " ".join(partes)
     except Exception:
         return ""
 
 
-async def coletar_site_completo(client: httpx.AsyncClient, site_url: str) -> str:
-    """Visita home + /sobre + /servicos + /vagas EM PARALELO."""
+async def coletar_site(client: httpx.AsyncClient, site_url: str) -> dict:
+    """
+    Visita home + /sobre + /servicos + /vagas + /trabalhe-conosco.
+    Retorna {url_completa: texto} — cada pagina com sua URL exata.
+    """
     if not site_url:
-        return ""
+        return {}
     if not site_url.startswith(("http://", "https://")):
         site_url = "https://" + site_url
-    from urllib.parse import urlparse
     parsed = urlparse(site_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
-    paths = ["", "/sobre", "/servicos", "/vagas", "/contato"]
-    textos = await asyncio.gather(*[_visitar_url(client, base + p) for p in paths])
-    return " ".join(t for t in textos if t)
+    paths = ["", "/sobre", "/servicos", "/vagas", "/trabalhe-conosco", "/carreiras", "/blog"]
+    urls = [base + p for p in paths]
+    textos = await asyncio.gather(*[visitar(client, u) for u in urls])
+    return {u: t for u, t in zip(urls, textos) if t and len(t) > 50}
 
 
 # ============================================================================
-# 1 DORK DDG por lead — combinado pra pegar interest keywords + news
+# DDG — APENAS pra DESCOBRIR URLs. Nunca rodamos detect() no resultado DDG.
 # ============================================================================
 
-async def dork_unico(client: httpx.AsyncClient, nome: str, cidade: str) -> tuple[str, list]:
+async def ddg_buscar_urls(client: httpx.AsyncClient, query: str, max_urls: int = 5,
+                          filtro_dominio: str = "") -> list[str]:
     """
-    UMA busca DDG só por lead. Combina deteccao de interesse + news.
-    Retorna (texto_snippets, urls).
+    Roda dork DDG e retorna SO AS URLs dos resultados (nao o texto/snippet).
+    filtro_dominio: se setado, so retorna URLs que contem essa string.
     """
-    if not nome:
-        return "", []
-    dork = (
-        f'"{nome}" '
-        f'(automacao OR chatbot OR "inteligencia artificial" OR "vaga" OR '
-        f'"novo site" OR app OR "transformacao digital" OR whatsapp)'
-    )
-    if cidade:
-        dork += f' "{cidade}"'
     try:
         r = await client.get(
-            f"https://html.duckduckgo.com/html/?q={quote(dork)}&kl=br-pt",
+            f"https://html.duckduckgo.com/html/?q={quote(query)}&kl=br-pt",
             timeout=10.0,
         )
         if r.status_code != 200:
-            return "", []
+            return []
         tree = HTMLParser(r.text)
-        snippets = []
         urls = []
-        for result in tree.css(".result")[:8]:
-            snip = result.css_first(".result__snippet")
-            title = result.css_first(".result__title")
-            link = result.css_first("a.result__a")
-            if snip:
-                snippets.append(snip.text(strip=True))
-            if title:
-                snippets.append(title.text(strip=True))
-            if link:
-                href = link.attributes.get("href", "")
-                m = re.search(r"uddg=([^&]+)", href)
-                if m:
-                    href = unquote(m.group(1))
-                if href.startswith("http"):
+        for link in tree.css("a.result__a"):
+            href = link.attributes.get("href", "")
+            m = re.search(r"uddg=([^&]+)", href)
+            if m:
+                href = unquote(m.group(1))
+            if href.startswith("http"):
+                if not filtro_dominio or filtro_dominio in href:
                     urls.append(href)
-        return " ".join(snippets), urls
+            if len(urls) >= max_urls:
+                break
+        return urls
     except Exception as e:
-        log.debug(f"dork falhou: {e}")
-        return "", []
+        log.debug(f"ddg_buscar_urls falhou: {e}")
+        return []
 
 
 # ============================================================================
-# Orquestrador v2.1 — minimo de DDG, maximo de fontes diretas
+# Orquestrador v2.2
 # ============================================================================
 
 async def aprofundar_v2(
@@ -164,7 +162,8 @@ async def aprofundar_v2(
     endereco_gmaps: str = "",
 ) -> DeepOsintV2Result:
     """
-    v2.1 — usa URLs JA CONHECIDAS (do enrich_gmaps), faz 1 dork DDG so.
+    v2.2 — detect() SO em conteudo de paginas visitadas. Cada sinal tem
+    source_url verificavel. DDG so descobre URLs.
     """
     res = DeepOsintV2Result()
     if not nome:
@@ -175,34 +174,58 @@ async def aprofundar_v2(
     res.facebook_url = facebook_url
 
     async with httpx.AsyncClient(headers=COMMON_HEADERS, timeout=10.0) as client:
-        # TODAS as fontes em paralelo — mas só 1 usa DDG
-        tasks = {
-            "site":      coletar_site_completo(client, site_url) if site_url else _empty_str(),
-            "instagram": _visitar_url(client, instagram_url) if instagram_url else _empty_str(),
-            "facebook":  _visitar_url(client, facebook_url) if facebook_url else _empty_str(),
-            "dork":      dork_unico(client, nome, cidade),  # 1 DDG só
-        }
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-        result_map = dict(zip(tasks.keys(), results))
+        # ---- FASE 1: DESCOBRIR URLs via DDG (sem detect aqui!) ----
+        # LinkedIn da empresa
+        linkedin_dork = f'site:linkedin.com/company "{nome}"'
+        # Vagas: paginas que falam de vaga/contratacao DESSA empresa
+        vaga_dork = (
+            f'"{nome}" (vaga OR vagas OR "trabalhe conosco" OR contratando OR '
+            f'"estamos contratando" OR "oportunidade")'
+        )
+        if cidade:
+            vaga_dork += f' "{cidade}"'
 
-        # Processa textos
-        if isinstance(result_map["site"], str) and result_map["site"]:
-            res.textos["site"] = result_map["site"]
-            res.fontes_consultadas.append("site")
-        if isinstance(result_map["instagram"], str) and result_map["instagram"]:
-            res.textos["instagram"] = result_map["instagram"]
-            res.fontes_consultadas.append("instagram")
-        if isinstance(result_map["facebook"], str) and result_map["facebook"]:
-            res.textos["facebook"] = result_map["facebook"]
-            res.fontes_consultadas.append("facebook")
-        if isinstance(result_map["dork"], tuple):
-            dork_texto, dork_urls = result_map["dork"]
-            if dork_texto:
-                res.textos["dork"] = dork_texto
-                res.news_urls = dork_urls
-                res.fontes_consultadas.append("ddg_dork")
+        linkedin_urls, vaga_urls_raw = await asyncio.gather(
+            ddg_buscar_urls(client, linkedin_dork, max_urls=2, filtro_dominio="linkedin.com/company"),
+            ddg_buscar_urls(client, vaga_dork, max_urls=4),
+        )
+        res.linkedin_url = linkedin_urls[0] if linkedin_urls else ""
+        # Filtra vaga_urls: evita redes sociais genericas, foca em paginas reais
+        res.vaga_urls = [
+            u for u in vaga_urls_raw
+            if not any(x in u for x in ["facebook.com", "instagram.com", "twitter.com"])
+        ][:3]
 
-        # CNPJ via BrasilAPI — API DIRETA, sem DDG (rapido e confiavel)
+        # ---- FASE 2: VISITAR todas as paginas (detect roda no conteudo) ----
+        # Monta lista de (chave_fonte, url) pra visitar
+        paginas_pra_visitar = []
+        if instagram_url:
+            paginas_pra_visitar.append(("instagram", instagram_url))
+        if facebook_url:
+            paginas_pra_visitar.append(("facebook", facebook_url))
+        if res.linkedin_url:
+            paginas_pra_visitar.append(("linkedin", res.linkedin_url))
+        for vu in res.vaga_urls:
+            paginas_pra_visitar.append(("vaga", vu))
+
+        # Visita site (multi-pagina) + as outras paginas, tudo paralelo
+        site_task = coletar_site(client, site_url) if site_url else _empty_dict()
+        outras_tasks = [visitar(client, u) for _, u in paginas_pra_visitar]
+        site_dict, *outras_textos = await asyncio.gather(site_task, *outras_tasks)
+
+        # textos_por_url: cada URL com seu texto
+        if isinstance(site_dict, dict):
+            for u, t in site_dict.items():
+                res.textos_por_url[u] = t
+            if site_dict:
+                res.fontes_consultadas.append("site")
+
+        for (fonte, url), texto in zip(paginas_pra_visitar, outras_textos):
+            if texto and len(texto) > 50:
+                res.textos_por_url[url] = texto
+                res.fontes_consultadas.append(fonte)
+
+        # ---- FASE 3: CNPJ via BrasilAPI (dado estruturado direto) ----
         try:
             if cnpj:
                 cnpj_data = await cnpj_socios.consultar_brasilapi(client, cnpj)
@@ -214,33 +237,28 @@ async def aprofundar_v2(
             if cnpj_data:
                 res.cnpj_data = cnpj_data
                 res.fontes_consultadas.append("brasilapi_cnpj")
-                # Razao social + CNAE tambem viram texto pra detectar interesse
-                res.textos["cnpj"] = (
-                    cnpj_data.get("razao_social", "") + " " +
-                    cnpj_data.get("nome_fantasia", "") + " " +
-                    cnpj_data.get("cnae_principal", "")
-                )
         except Exception as e:
             log.debug(f"cnpj falhou: {e}")
 
-    # Mapa source → URL pra rastrear cada sinal
-    source_url_map = {
-        "site":      site_url,
-        "instagram": instagram_url,
-        "facebook":  facebook_url,
-        "dork":      (res.news_urls or [""])[0] if res.news_urls else "",
-        "cnpj":      "",
-    }
-
-    # Detector POR FONTE — cada sinal sabe sua origem
+    # ---- DETECCAO: roda SO no conteudo de paginas reais ----
     all_sinais = []
     categorias_aplicadas = set()
     boost_total = 0
-    for source_name, texto in res.textos.items():
-        sinais_da_fonte, _ = detect(texto)
-        for s in sinais_da_fonte:
-            s.source_name = source_name
-            s.source_url = source_url_map.get(source_name, "")
+    for url, texto in res.textos_por_url.items():
+        sinais_da_pagina, _ = detect(texto)
+        for s in sinais_da_pagina:
+            s.source_url = url  # URL REAL E VERIFICAVEL da pagina onde foi visto
+            # source_name = tipo de fonte (deduz da url)
+            if "linkedin.com" in url:
+                s.source_name = "linkedin"
+            elif "instagram.com" in url:
+                s.source_name = "instagram"
+            elif "facebook.com" in url:
+                s.source_name = "facebook"
+            elif url in res.vaga_urls:
+                s.source_name = "vaga"
+            else:
+                s.source_name = "site"
             all_sinais.append(s)
             if s.categoria not in categorias_aplicadas:
                 categorias_aplicadas.add(s.categoria)
@@ -250,12 +268,13 @@ async def aprofundar_v2(
     res.boost_score = min(boost_total, 100)
 
     log.info(
-        f"  deep_osint_v2.1: {len(res.fontes_consultadas)} fontes, "
+        f"  deep_osint_v2.2: {len(res.fontes_consultadas)} fontes "
+        f"({len(res.textos_por_url)} paginas visitadas), "
         f"{len(all_sinais)} sinais ({len(categorias_aplicadas)} cat), boost +{res.boost_score}, "
-        f"site={bool(site_url)} ig={bool(instagram_url)} cnpj={bool(res.cnpj_data)}"
+        f"linkedin={bool(res.linkedin_url)} vagas={len(res.vaga_urls)} cnpj={bool(res.cnpj_data)}"
     )
     return res
 
 
-async def _empty_str() -> str:
-    return ""
+async def _empty_dict() -> dict:
+    return {}

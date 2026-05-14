@@ -135,7 +135,7 @@ async def main(limit: int = 1000) -> None:
                      s.trecho[:500], s.source_url or None, s.boost),
                 )
 
-            # Salva perfis sociais (só os que temos URL)
+            # Salva perfis sociais (só os que temos URL real)
             new_socials = 0
             if r.instagram_url:
                 cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "instagram", r.instagram_url, 85))
@@ -145,6 +145,12 @@ async def main(limit: int = 1000) -> None:
                 new_socials += 1
             if r.site_url:
                 cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "site", r.site_url, 90))
+                new_socials += 1
+            if r.linkedin_url:
+                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "linkedin", r.linkedin_url, 90))
+                new_socials += 1
+            for vu in r.vaga_urls:
+                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "vaga", vu, 80))
                 new_socials += 1
 
             perfis_novos += new_socials
@@ -161,7 +167,9 @@ async def main(limit: int = 1000) -> None:
                     "categorias": categorias,
                     "captured_at": datetime.now(timezone.utc).isoformat(),
                     "cnpj_data": r.cnpj_data,
-                    "news_urls": r.news_urls[:5],
+                    "linkedin_url": r.linkedin_url,
+                    "vaga_urls": r.vaga_urls[:3],
+                    "paginas_visitadas": list(r.textos_por_url.keys())[:10],
                 }
             }
 
