@@ -918,33 +918,87 @@ with aba_leads:
     start_idx = (current_page - 1) * PAGE_SIZE
     df_page = df_f.iloc[start_idx:start_idx + PAGE_SIZE]
 
-    # CSS sutil pra alinhar e dar look de tabela
-    st.markdown(
-        """
-        <style>
-        .leads-row-cell { font-size: 12px; padding: 4px 6px; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     def _esc(v):
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return ""
         s = str(v)
         return s.replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
-    # Cabeçalho com largura fixa por coluna
-    COL_W = [0.7, 1.2, 1.4, 0.9, 1.0, 1.9, 1.4, 1.3]
-    h = st.columns(COL_W)
+    # CSS injection: transforma st.columns natives em visual de tabela
+    # Marker .table-leads-start ativa o estilo só pros stHorizontalBlock seguintes
+    st.markdown(
+        """
+        <style>
+        /* Container das linhas — borders entre colunas, padding tight, fonte menor */
+        .table-leads-start ~ div[data-testid="stHorizontalBlock"] {
+            border-bottom: 1px solid #2a2a2a !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            gap: 0 !important;
+            min-height: 0 !important;
+        }
+        .table-leads-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"] {
+            border-right: 1px solid #2a2a2a !important;
+            padding: 4px 8px !important;
+            font-size: 12px !important;
+            line-height: 1.3 !important;
+            min-width: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        .table-leads-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"]:last-child {
+            border-right: none !important;
+        }
+        /* Markdown <p> sem margem */
+        .table-leads-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"] p {
+            margin: 0 !important; font-size: 12px !important;
+        }
+        /* Botão 📋: laranja, compacto */
+        .table-leads-start ~ div[data-testid="stHorizontalBlock"] button {
+            background: #ff4b4b !important;
+            color: white !important;
+            border: none !important;
+            padding: 3px 8px !important;
+            min-height: 26px !important;
+            height: 26px !important;
+            border-radius: 4px !important;
+            font-size: 13px !important;
+            transition: background 0.15s !important;
+        }
+        .table-leads-start ~ div[data-testid="stHorizontalBlock"] button:hover {
+            background: #ff8c42 !important;
+        }
+        /* Hover na linha inteira */
+        .table-leads-start ~ div[data-testid="stHorizontalBlock"]:hover {
+            background: rgba(255, 75, 75, 0.04);
+        }
+        /* Cabeçalho com fundo destacado */
+        .table-leads-header div[data-testid="column"] {
+            background: #1a1a1a !important;
+            border-bottom: 2px solid #444 !important;
+            border-right: 1px solid #2a2a2a !important;
+            padding: 8px 8px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Cabeçalho da tabela
+    COL_W = [0.55, 1.3, 1.5, 0.9, 1.0, 1.9, 1.4, 1.3]
     headers = ["📋", "Score 🔥", "Sinais 🎯", "Cidade", "Nicho", "Nome", "Telefone", "Responsável"]
+    st.markdown('<div class="table-leads-header-marker"></div>', unsafe_allow_html=True)
+    h = st.columns(COL_W)
     for col, lbl in zip(h, headers):
         col.markdown(
             f"<div style='font-size:10.5px;font-weight:700;color:#aaa;"
-            f"text-transform:uppercase;letter-spacing:0.5px;"
-            f"border-bottom:2px solid #444;padding:6px 4px;'>{lbl}</div>",
+            f"text-transform:uppercase;letter-spacing:0.6px;"
+            f"background:#1a1a1a;padding:8px 4px;margin:-4px -8px;border-bottom:2px solid #444;'>{lbl}</div>",
             unsafe_allow_html=True,
         )
+
+    # MARCADOR — CSS acima só vale pros stHorizontalBlock seguintes
+    st.markdown('<div class="table-leads-start"></div>', unsafe_allow_html=True)
 
     # Linhas nativas — 25 por página, click no botao abre dialog SEM nova aba
     for _, row in df_page.iterrows():
@@ -1000,21 +1054,6 @@ with aba_leads:
         else:
             c[7].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
 
-    # Custom CSS pro botao 📋 ficar laranja (override do default Streamlit)
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stHorizontalBlock"] button[kind="secondary"]:has(div:contains("📋")) {
-            background: #ff4b4b !important;
-            color: white !important;
-            min-height: 28px !important;
-            height: 28px !important;
-            padding: 2px 8px !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
