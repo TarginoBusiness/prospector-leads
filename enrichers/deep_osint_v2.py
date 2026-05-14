@@ -1,33 +1,32 @@
 """
-Deep OSINT v2 — orquestrador aprofundado.
+Deep OSINT v2 — orquestrador aprofundado (REESCRITO v2.1).
 
-Diferencas do deep_osint v1:
-- Inclui novas fontes: TikTok, Instagram (publico), Twitter via Nitter,
-  LinkedIn company page, CNPJ socios, reverse phone, news regional,
-  Reclame Aqui
-- Tudo roda em paralelo (asyncio.gather)
-- Retorna nao so sinais de interesse mas tambem dados estruturados:
-  perfis sociais novos, CNPJ socios, telefones alternativos
+LICAO APRENDIDA: a v2.0 fazia ~7 buscas DuckDuckGo POR LEAD (achar perfil
+IG + TikTok + Twitter + LinkedIn + CNPJ + news + reclame). DDG bloqueou
+apos ~30 requests → todas as fontes falhavam → 0 sinais + 80s/lead.
+
+ESTRATEGIA v2.1:
+- NAO re-descobre perfis via DDG. Usa o site/Instagram/Facebook que o
+  enrich_gmaps JA achou e guardou em raw_payload.deep_enrich.
+- Visita esses perfis DIRETO (sem DDG).
+- BrasilAPI = API direta, sem DDG.
+- 1 dork DDG MAXIMO por lead (so pra interest keywords + news).
+- Timeout 8s (era 15s) → falhas sao rapidas.
+- Resultado esperado: ~5-10s/lead, sem rate-limit.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
+from urllib.parse import quote, unquote
 
 import httpx
+from selectolax.parser import HTMLParser
 
 from enrichers.interest_detector import InterestSignal, detect
-from enrichers.sources import (
-    cnpj_socios,
-    instagram,
-    linkedin_company,
-    news_regional,
-    nitter_twitter,
-    reclame_aqui,
-    reverse_phone,
-    tiktok,
-)
+from enrichers.sources import cnpj_socios
 
 log = logging.getLogger("enricher.deep_osint_v2")
 
@@ -36,22 +35,13 @@ log = logging.getLogger("enricher.deep_osint_v2")
 class DeepOsintV2Result:
     sinais: list[InterestSignal] = field(default_factory=list)
     boost_score: int = 0
-
-    # Perfis novos descobertos
-    tiktok_url: str = ""
     instagram_url: str = ""
-    twitter_username: str = ""
-    linkedin_company_url: str = ""
-
-    # Dados estruturados
+    facebook_url: str = ""
+    site_url: str = ""
     cnpj_data: dict = field(default_factory=dict)
-    reverse_phone_data: dict = field(default_factory=dict)
-    news_mentions: dict = field(default_factory=dict)
+    news_urls: list = field(default_factory=list)
     reclame_aqui: dict = field(default_factory=dict)
-
-    # Textos por fonte (pra auditoria)
     textos: dict = field(default_factory=dict)
-
     fontes_consultadas: list[str] = field(default_factory=list)
 
 
@@ -64,13 +54,102 @@ COMMON_HEADERS = {
 }
 
 
-async def _empty_dict() -> dict:
-    return {}
+# ============================================================================
+# Coletores DIRETOS (sem DDG) — usam URLs que ja temos
+# ============================================================================
+
+async def _visitar_url(client: httpx.AsyncClient, url: str, max_chars: int = 30000) -> str:
+    """Visita uma URL e retorna o texto. Timeout curto pra falhar rapido."""
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    try:
+        r = await client.get(url, timeout=8.0, follow_redirects=True)
+        if r.status_code != 200:
+            return ""
+        tree = HTMLParser(r.text)
+        # Pega meta description + texto do body
+        partes = []
+        for sel in ["meta[name='description']", "meta[property='og:description']", "meta[property='og:title']"]:
+            m = tree.css_first(sel)
+            if m:
+                c = m.attributes.get("content", "")
+                if c:
+                    partes.append(c)
+        body = tree.text() or ""
+        partes.append(body[:max_chars])
+        return " ".join(partes)
+    except Exception:
+        return ""
 
 
-async def _empty_str() -> str:
-    return ""
+async def coletar_site_completo(client: httpx.AsyncClient, site_url: str) -> str:
+    """Visita home + /sobre + /servicos + /vagas EM PARALELO."""
+    if not site_url:
+        return ""
+    if not site_url.startswith(("http://", "https://")):
+        site_url = "https://" + site_url
+    from urllib.parse import urlparse
+    parsed = urlparse(site_url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    paths = ["", "/sobre", "/servicos", "/vagas", "/contato"]
+    textos = await asyncio.gather(*[_visitar_url(client, base + p) for p in paths])
+    return " ".join(t for t in textos if t)
 
+
+# ============================================================================
+# 1 DORK DDG por lead — combinado pra pegar interest keywords + news
+# ============================================================================
+
+async def dork_unico(client: httpx.AsyncClient, nome: str, cidade: str) -> tuple[str, list]:
+    """
+    UMA busca DDG só por lead. Combina deteccao de interesse + news.
+    Retorna (texto_snippets, urls).
+    """
+    if not nome:
+        return "", []
+    dork = (
+        f'"{nome}" '
+        f'(automacao OR chatbot OR "inteligencia artificial" OR "vaga" OR '
+        f'"novo site" OR app OR "transformacao digital" OR whatsapp)'
+    )
+    if cidade:
+        dork += f' "{cidade}"'
+    try:
+        r = await client.get(
+            f"https://html.duckduckgo.com/html/?q={quote(dork)}&kl=br-pt",
+            timeout=10.0,
+        )
+        if r.status_code != 200:
+            return "", []
+        tree = HTMLParser(r.text)
+        snippets = []
+        urls = []
+        for result in tree.css(".result")[:8]:
+            snip = result.css_first(".result__snippet")
+            title = result.css_first(".result__title")
+            link = result.css_first("a.result__a")
+            if snip:
+                snippets.append(snip.text(strip=True))
+            if title:
+                snippets.append(title.text(strip=True))
+            if link:
+                href = link.attributes.get("href", "")
+                m = re.search(r"uddg=([^&]+)", href)
+                if m:
+                    href = unquote(m.group(1))
+                if href.startswith("http"):
+                    urls.append(href)
+        return " ".join(snippets), urls
+    except Exception as e:
+        log.debug(f"dork falhou: {e}")
+        return "", []
+
+
+# ============================================================================
+# Orquestrador v2.1 — minimo de DDG, maximo de fontes diretas
+# ============================================================================
 
 async def aprofundar_v2(
     *,
@@ -80,121 +159,80 @@ async def aprofundar_v2(
     cnpj: str = "",
     telefone: str = "",
     site_url: str = "",
+    instagram_url: str = "",
+    facebook_url: str = "",
     endereco_gmaps: str = "",
 ) -> DeepOsintV2Result:
     """
-    Roda TODAS as fontes em paralelo.
-    Retorna sinais + dados estruturados.
+    v2.1 — usa URLs JA CONHECIDAS (do enrich_gmaps), faz 1 dork DDG so.
     """
     res = DeepOsintV2Result()
     if not nome:
         return res
 
-    async with httpx.AsyncClient(headers=COMMON_HEADERS, timeout=15.0) as client:
-        # Fase 1: descobrir URLs de perfis sociais (paralelo)
-        ig_url_task = instagram.buscar_perfil(client, nome, cidade)
-        tt_url_task = tiktok.buscar_perfil(client, nome, cidade)
-        tw_user_task = nitter_twitter.buscar_perfil_twitter(client, nome)
-        li_url_task = linkedin_company.buscar_pagina_empresa(client, nome, cidade)
+    res.site_url = site_url
+    res.instagram_url = instagram_url
+    res.facebook_url = facebook_url
 
-        ig_url, tt_url, tw_user, li_url = await asyncio.gather(
-            ig_url_task, tt_url_task, tw_user_task, li_url_task,
-        )
-
-        res.instagram_url = ig_url or ""
-        res.tiktok_url = tt_url or ""
-        res.twitter_username = tw_user or ""
-        res.linkedin_company_url = li_url or ""
-
-        if ig_url:
-            res.fontes_consultadas.append("instagram_busca")
-        if tt_url:
-            res.fontes_consultadas.append("tiktok_busca")
-        if tw_user:
-            res.fontes_consultadas.append("twitter_busca")
-        if li_url:
-            res.fontes_consultadas.append("linkedin_busca")
-
-        # Fase 2: coletar dados dos perfis + outras fontes (TUDO em paralelo)
+    async with httpx.AsyncClient(headers=COMMON_HEADERS, timeout=10.0) as client:
+        # TODAS as fontes em paralelo — mas só 1 usa DDG
         tasks = {
-            "instagram": instagram.coletar_perfil(client, ig_url) if ig_url else _empty_dict(),
-            "tiktok": tiktok.coletar_perfil(client, tt_url) if tt_url else _empty_dict(),
-            "twitter": nitter_twitter.coletar_tweets(client, tw_user) if tw_user else _empty_dict(),
-            "linkedin": linkedin_company.coletar_pagina_empresa(client, li_url) if li_url else _empty_dict(),
-            "cnpj_buscar": cnpj_socios.buscar_cnpj_por_nome(client, nome) if not cnpj else _empty_str(),
-            "reverse_phone": reverse_phone.buscar_via_ddg(client, telefone) if telefone else _empty_dict(),
-            "news": news_regional.buscar_mencoes(client, nome, cidade_tag),
-            "reclame": reclame_aqui.buscar_reclamacoes(client, nome),
+            "site":      coletar_site_completo(client, site_url) if site_url else _empty_str(),
+            "instagram": _visitar_url(client, instagram_url) if instagram_url else _empty_str(),
+            "facebook":  _visitar_url(client, facebook_url) if facebook_url else _empty_str(),
+            "dork":      dork_unico(client, nome, cidade),  # 1 DDG só
         }
-
-        results = await asyncio.gather(*tasks.values(), return_exceptions=False)
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         result_map = dict(zip(tasks.keys(), results))
 
-        # Processa cada resultado
-        if result_map["instagram"]:
-            d = result_map["instagram"]
-            res.textos["instagram"] = (d.get("bio") or "") + " " + " ".join(d.get("hashtags", []))
-            res.fontes_consultadas.append("instagram_coleta")
+        # Processa textos
+        if isinstance(result_map["site"], str) and result_map["site"]:
+            res.textos["site"] = result_map["site"]
+            res.fontes_consultadas.append("site")
+        if isinstance(result_map["instagram"], str) and result_map["instagram"]:
+            res.textos["instagram"] = result_map["instagram"]
+            res.fontes_consultadas.append("instagram")
+        if isinstance(result_map["facebook"], str) and result_map["facebook"]:
+            res.textos["facebook"] = result_map["facebook"]
+            res.fontes_consultadas.append("facebook")
+        if isinstance(result_map["dork"], tuple):
+            dork_texto, dork_urls = result_map["dork"]
+            if dork_texto:
+                res.textos["dork"] = dork_texto
+                res.news_urls = dork_urls
+                res.fontes_consultadas.append("ddg_dork")
 
-        if result_map["tiktok"]:
-            d = result_map["tiktok"]
-            res.textos["tiktok"] = (d.get("bio") or "") + " " + " ".join(d.get("hashtags", []))
-            res.fontes_consultadas.append("tiktok_coleta")
+        # CNPJ via BrasilAPI — API DIRETA, sem DDG (rapido e confiavel)
+        try:
+            if cnpj:
+                cnpj_data = await cnpj_socios.consultar_brasilapi(client, cnpj)
+            else:
+                cnpj_data = await cnpj_socios.descobrir_cnpj_verificado(
+                    client, nome, endereco_gmaps=endereco_gmaps,
+                    cidade=cidade, min_proximidade=60,
+                )
+            if cnpj_data:
+                res.cnpj_data = cnpj_data
+                res.fontes_consultadas.append("brasilapi_cnpj")
+                # Razao social + CNAE tambem viram texto pra detectar interesse
+                res.textos["cnpj"] = (
+                    cnpj_data.get("razao_social", "") + " " +
+                    cnpj_data.get("nome_fantasia", "") + " " +
+                    cnpj_data.get("cnae_principal", "")
+                )
+        except Exception as e:
+            log.debug(f"cnpj falhou: {e}")
 
-        if result_map["twitter"]:
-            d = result_map["twitter"]
-            res.textos["twitter"] = d.get("tweets_text", "")
-            res.fontes_consultadas.append("twitter_coleta")
-
-        if result_map["linkedin"]:
-            d = result_map["linkedin"]
-            res.textos["linkedin"] = (d.get("descricao") or "") + " " + (d.get("industry") or "")
-            res.fontes_consultadas.append("linkedin_coleta")
-
-        # CNPJ: se temos, usa direto. Se nao, busca com endereço + verifica proximidade.
-        if cnpj:
-            cnpj_data = await cnpj_socios.consultar_brasilapi(client, cnpj)
-            res.cnpj_data = cnpj_data
-        else:
-            cnpj_data = await cnpj_socios.descobrir_cnpj_verificado(
-                client, nome, endereco_gmaps=endereco_gmaps, cidade=cidade, min_proximidade=60,
-            )
-            res.cnpj_data = cnpj_data
-        if res.cnpj_data:
-            res.fontes_consultadas.append("brasilapi_cnpj")
-
-        if result_map["reverse_phone"]:
-            res.reverse_phone_data = result_map["reverse_phone"]
-            res.textos["reverse_phone"] = " ".join(res.reverse_phone_data.get("snippets", []))
-            res.fontes_consultadas.append("reverse_phone")
-
-        if result_map["news"]:
-            res.news_mentions = result_map["news"]
-            res.textos["news"] = res.news_mentions.get("texto_concatenado", "")
-            res.fontes_consultadas.append("news_regional")
-
-        if result_map["reclame"]:
-            res.reclame_aqui = result_map["reclame"]
-            res.textos["reclame_aqui"] = res.reclame_aqui.get("texto_concatenado", "")
-            res.fontes_consultadas.append("reclame_aqui")
-
-    # Mapa: source_name → URL pra rastrear ONDE foi visto cada sinal
-    twitter_url = f"https://twitter.com/{res.twitter_username}" if res.twitter_username else ""
-    news_top = (res.news_mentions.get("urls", []) or [""])[0] if res.news_mentions else ""
-    reclame_top = (res.reclame_aqui.get("urls", []) or [""])[0] if res.reclame_aqui else ""
-    reverse_top = (res.reverse_phone_data.get("urls", []) or [""])[0] if res.reverse_phone_data else ""
-
+    # Mapa source → URL pra rastrear cada sinal
     source_url_map = {
-        "instagram":     res.instagram_url,
-        "tiktok":        res.tiktok_url,
-        "twitter":       twitter_url,
-        "linkedin":      res.linkedin_company_url,
-        "news":          news_top,
-        "reclame_aqui":  reclame_top,
-        "reverse_phone": reverse_top,
+        "site":      site_url,
+        "instagram": instagram_url,
+        "facebook":  facebook_url,
+        "dork":      (res.news_urls or [""])[0] if res.news_urls else "",
+        "cnpj":      "",
     }
 
-    # Roda detector POR FONTE pra cada sinal saber sua origem real
+    # Detector POR FONTE — cada sinal sabe sua origem
     all_sinais = []
     categorias_aplicadas = set()
     boost_total = 0
@@ -204,20 +242,20 @@ async def aprofundar_v2(
             s.source_name = source_name
             s.source_url = source_url_map.get(source_name, "")
             all_sinais.append(s)
-            # Boost cumula 1x por categoria (de qualquer fonte)
             if s.categoria not in categorias_aplicadas:
                 categorias_aplicadas.add(s.categoria)
                 boost_total += s.boost
 
-    # Aplica teto cumulativo
     res.sinais = all_sinais
-    res.boost_score = min(boost_total, 50)
+    res.boost_score = min(boost_total, 100)
 
     log.info(
-        f"  deep_osint_v2: {len(res.fontes_consultadas)} fontes, "
-        f"{len(all_sinais)} sinais ({len(categorias_aplicadas)} categorias), boost +{res.boost_score}, "
-        f"ig={bool(res.instagram_url)} tt={bool(res.tiktok_url)} "
-        f"tw={bool(res.twitter_username)} li={bool(res.linkedin_company_url)} "
-        f"cnpj={bool(res.cnpj_data)} reclame={res.reclame_aqui.get('n_resultados', 0)}"
+        f"  deep_osint_v2.1: {len(res.fontes_consultadas)} fontes, "
+        f"{len(all_sinais)} sinais ({len(categorias_aplicadas)} cat), boost +{res.boost_score}, "
+        f"site={bool(site_url)} ig={bool(instagram_url)} cnpj={bool(res.cnpj_data)}"
     )
     return res
+
+
+async def _empty_str() -> str:
+    return ""

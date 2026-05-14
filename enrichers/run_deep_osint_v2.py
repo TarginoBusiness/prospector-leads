@@ -95,14 +95,18 @@ async def main(limit: int = 1000) -> None:
 
         cidade_str = lead.get("cidade") or cidade_nome.get(lead.get("cidade_tag") or "", "")
 
-        # Extrai endereço do gmaps (já temos no raw_payload do scrape original)
-        endereco_gmaps = ""
+        # Extrai URLs JA CONHECIDAS do raw_payload (enrich_gmaps ja descobriu!)
+        endereco_gmaps = site_known = ig_known = fb_known = ""
         try:
             rp = lead.get("raw_payload") or {}
             if isinstance(rp, str):
                 rp = json.loads(rp)
-            endereco_gmaps = (rp.get("gmaps") or {}).get("endereco", "") or \
-                             (rp.get("deep_enrich") or {}).get("endereco", "")
+            deep_enrich = rp.get("deep_enrich") or {}
+            gmaps_data = rp.get("gmaps") or {}
+            endereco_gmaps = gmaps_data.get("endereco", "") or deep_enrich.get("endereco", "")
+            site_known = deep_enrich.get("site", "") or ""
+            ig_known = deep_enrich.get("instagram", "") or ""
+            fb_known = deep_enrich.get("facebook", "") or ""
         except Exception:
             pass
 
@@ -113,14 +117,16 @@ async def main(limit: int = 1000) -> None:
                 cidade_tag=lead.get("cidade_tag") or "",
                 cnpj=lead.get("cnpj") or "",
                 telefone=lead.get("telefone") or "",
-                site_url="",
+                site_url=site_known,           # USA o que o enrich ja achou
+                instagram_url=ig_known,        # idem
+                facebook_url=fb_known,         # idem
                 endereco_gmaps=endereco_gmaps,
             )
         except Exception as e:
             log.exception(f"falhou aprofundar lead {lead['id']}: {e}")
             continue
 
-        # Salva sinais (agora com source_url real pra cada um)
+        # Salva sinais (com source_url real pra cada um)
         with get_conn() as c, c.cursor() as cur:
             for s in r.sinais:
                 cur.execute(
@@ -129,21 +135,16 @@ async def main(limit: int = 1000) -> None:
                      s.trecho[:500], s.source_url or None, s.boost),
                 )
 
-            # Salva perfis sociais descobertos
+            # Salva perfis sociais (só os que temos URL)
             new_socials = 0
             if r.instagram_url:
                 cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "instagram", r.instagram_url, 85))
                 new_socials += 1
-            if r.tiktok_url:
-                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "tiktok", r.tiktok_url, 85))
+            if r.facebook_url:
+                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "facebook", r.facebook_url, 85))
                 new_socials += 1
-            if r.twitter_username:
-                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "twitter",
-                                                f"https://twitter.com/{r.twitter_username}", 75))
-                new_socials += 1
-            if r.linkedin_company_url:
-                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "linkedin",
-                                                r.linkedin_company_url, 90))
+            if r.site_url:
+                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "site", r.site_url, 90))
                 new_socials += 1
 
             perfis_novos += new_socials
@@ -160,15 +161,7 @@ async def main(limit: int = 1000) -> None:
                     "categorias": categorias,
                     "captured_at": datetime.now(timezone.utc).isoformat(),
                     "cnpj_data": r.cnpj_data,
-                    "reverse_phone": r.reverse_phone_data,
-                    "news_mentions": {
-                        "n_urls": len(r.news_mentions.get("urls", [])),
-                        "urls_top5": r.news_mentions.get("urls", [])[:5],
-                    } if r.news_mentions else {},
-                    "reclame_aqui": {
-                        "n_resultados": r.reclame_aqui.get("n_resultados", 0),
-                        "urls_top3": r.reclame_aqui.get("urls", [])[:3],
-                    } if r.reclame_aqui else {},
+                    "news_urls": r.news_urls[:5],
                 }
             }
 
