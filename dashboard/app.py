@@ -900,15 +900,54 @@ with aba_leads:
         except (ValueError, KeyError):
             pass
 
-    # Gera HTML da tabela em UMA so string (rapido — 1 markdown render)
+    # ====== Paginacao + tabela com botao NATIVO por linha ======
+    PAGE_SIZE = 25
+    total_pages = max(1, (len(df_f) + PAGE_SIZE - 1) // PAGE_SIZE)
+    pg_col1, pg_col2, pg_col3 = st.columns([1, 4, 1])
+    with pg_col1:
+        current_page = st.number_input(
+            "Página", min_value=1, max_value=total_pages, value=1, step=1, key="leads_page_num"
+        )
+    with pg_col2:
+        st.caption(
+            f"Mostrando {(current_page - 1) * PAGE_SIZE + 1}–"
+            f"{min(current_page * PAGE_SIZE, len(df_f))} de {len(df_f)} leads · "
+            f"Cada linha tem botão 📋 que abre a ficha NESTA janela."
+        )
+
+    start_idx = (current_page - 1) * PAGE_SIZE
+    df_page = df_f.iloc[start_idx:start_idx + PAGE_SIZE]
+
+    # CSS sutil pra alinhar e dar look de tabela
+    st.markdown(
+        """
+        <style>
+        .leads-row-cell { font-size: 12px; padding: 4px 6px; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     def _esc(v):
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return ""
         s = str(v)
         return s.replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
-    rows_html = []
-    for _, row in df_f.iterrows():
+    # Cabeçalho com largura fixa por coluna
+    COL_W = [0.7, 1.2, 1.4, 0.9, 1.0, 1.9, 1.4, 1.3]
+    h = st.columns(COL_W)
+    headers = ["📋", "Score 🔥", "Sinais 🎯", "Cidade", "Nicho", "Nome", "Telefone", "Responsável"]
+    for col, lbl in zip(h, headers):
+        col.markdown(
+            f"<div style='font-size:10.5px;font-weight:700;color:#aaa;"
+            f"text-transform:uppercase;letter-spacing:0.5px;"
+            f"border-bottom:2px solid #444;padding:6px 4px;'>{lbl}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Linhas nativas — 25 por página, click no botao abre dialog SEM nova aba
+    for _, row in df_page.iterrows():
         lead_id_row = int(row["id"])
         raw_score = int(row["score_temperatura"])
         score = _score_relativo(raw_score)
@@ -937,122 +976,45 @@ with aba_leads:
         else:
             sinais_html = '<span class="empty-cell">○ 0</span>'
 
+        c = st.columns(COL_W)
+
+        # Botão NATIVO Streamlit — click chama show_lead_dialog NA MESMA JANELA
+        if c[0].button("📋", key=f"open_ficha_{lead_id_row}", help=f"Abrir ficha do lead #{lead_id_row}"):
+            show_lead_dialog(lead_id_row)
+        c[1].markdown(score_html, unsafe_allow_html=True)
+        c[2].markdown(sinais_html, unsafe_allow_html=True)
+        c[3].markdown(f"<span style='font-size:12px;'>{_esc(row['cidade_tag']) or '—'}</span>", unsafe_allow_html=True)
+        c[4].markdown(f"<span style='font-size:11px;'>{_esc(row['nicho']) or '—'}</span>", unsafe_allow_html=True)
+        c[5].markdown(f"<span style='font-size:12px;font-weight:500;'>{_esc(row['nome']) or '(sem nome)'}</span>", unsafe_allow_html=True)
+
         tel = row["telefone"]
         if tel and not pd.isna(tel):
             wa = _wa_url(tel)
-            tel_html = f'<a href="{wa}" target="_blank" class="tel-link">{_esc(tel)}</a>'
+            c[6].markdown(f"<a href='{wa}' target='_blank' style='color:#4caf50;text-decoration:none;font-size:12px;'>{_esc(tel)}</a>", unsafe_allow_html=True)
         else:
-            tel_html = '<span class="empty-cell">—</span>'
+            c[6].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
 
         resp = row.get("responsavel")
-        resp_html = _esc(resp) if resp and not pd.isna(resp) else '<span class="empty-cell">—</span>'
+        if resp and not pd.isna(resp):
+            c[7].markdown(f"<span style='font-size:11px;'>{_esc(resp)}</span>", unsafe_allow_html=True)
+        else:
+            c[7].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
 
-        # ID + link prancheta (target=_blank é o único permitido pelo sandbox)
-        id_cell = (
-            f'<a href="?lead_id={lead_id_row}" target="_blank" '
-            f'class="ficha-link" title="Abrir ficha em nova aba">'
-            f'📋 <strong>#{lead_id_row}</strong>'
-            f'</a>'
-        )
-        rows_html.append(
-            f'<tr>'
-            f'<td>{id_cell}</td>'
-            f'<td>{score_html}</td>'
-            f'<td>{sinais_html}</td>'
-            f'<td>{_esc(row["cidade_tag"]) or "—"}</td>'
-            f'<td style="font-size:11px;">{_esc(row["nicho"]) or "—"}</td>'
-            f'<td><strong>{_esc(row["nome"]) or "(sem nome)"}</strong></td>'
-            f'<td>{tel_html}</td>'
-            f'<td style="font-size:11px;">{resp_html}</td>'
-            f'</tr>'
-        )
-
-    # HTML completo com CSS embarcado dentro do iframe (sem sanitizacao Streamlit)
-    table_html = f"""<!DOCTYPE html>
-    <html lang="pt-BR">
-    <head>
-    <meta charset="UTF-8">
-    <style>
-        * {{ box-sizing: border-box; }}
-        body {{ margin: 0; padding: 0; background: #0e1117; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #e0e0e0; }}
-        .leads-table-container {{
-            height: 650px; overflow-y: auto;
-            border: 1px solid #2a2a2a; border-radius: 6px; background: #0e1117;
-        }}
-        table.leads-html-table {{
-            width: 100%; border-collapse: collapse; font-size: 12px;
-        }}
-        thead th {{
-            position: sticky; top: 0; background: #1a1a1a;
-            color: #aaa; font-size: 10.5px; font-weight: 700;
-            text-transform: uppercase; letter-spacing: 0.6px;
-            padding: 8px; border-bottom: 2px solid #444;
-            border-right: 1px solid #2a2a2a; text-align: left; z-index: 2;
-        }}
-        thead th:last-child {{ border-right: none; }}
-        tbody td {{
-            padding: 6px 8px; border-bottom: 1px solid #232323;
-            border-right: 1px solid #232323; vertical-align: middle;
-        }}
-        tbody td:last-child {{ border-right: none; }}
-        tbody tr:hover {{ background: rgba(255, 75, 75, 0.05); }}
-        .ficha-link {{
-            display: inline-block;
-            background: #ff4b4b;
+    # Custom CSS pro botao 📋 ficar laranja (override do default Streamlit)
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stHorizontalBlock"] button[kind="secondary"]:has(div:contains("📋")) {
+            background: #ff4b4b !important;
             color: white !important;
-            text-decoration: none !important;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            font-weight: 600;
-            line-height: 1;
-            transition: background 0.15s, transform 0.1s;
-            cursor: pointer;
-            white-space: nowrap;
-        }}
-        .ficha-link:hover {{ background: #ff8c42; transform: scale(1.05); }}
-        .ficha-link strong {{ color: white !important; font-size: 11px; opacity: 0.95; }}
-        .score-bar-outer {{
-            background: #1a1a1a; border-radius: 4px; height: 18px;
-            position: relative; overflow: hidden; min-width: 80px;
-        }}
-        .score-bar-fill {{ height: 100%; }}
-        .score-bar-label {{
-            position: absolute; top: 0; left: 0; right: 0;
-            text-align: center; line-height: 18px;
-            font-size: 11px; font-weight: 600; color: #fff;
-            text-shadow: 0 0 3px rgba(0,0,0,0.7);
-        }}
-        .sinal-count {{ color: #4caf50; font-weight: 600; }}
-        .sinal-cats {{ color: #888; font-size: 10px; line-height: 1.2; display: block; margin-top: 2px; }}
-        .tel-link {{ color: #4caf50; text-decoration: none; }}
-        .tel-link:hover {{ text-decoration: underline; }}
-        .empty-cell {{ color: #555; }}
-    </style>
-    </head>
-    <body>
-    <div class="leads-table-container">
-      <table class="leads-html-table">
-        <thead>
-          <tr>
-            <th style="width:85px;">📋 Abrir</th>
-            <th style="width:110px;">Score 🔥</th>
-            <th style="width:140px;">Sinais 🎯</th>
-            <th style="width:90px;">Cidade</th>
-            <th style="width:120px;">Nicho</th>
-            <th>Nome</th>
-            <th style="width:140px;">Telefone</th>
-            <th style="width:130px;">Responsável</th>
-          </tr>
-        </thead>
-        <tbody>{''.join(rows_html)}</tbody>
-      </table>
-    </div>
-    </body>
-    </html>
-    """
-    # Renderiza dentro de iframe DEDICADO — sem sanitizacao do Streamlit
-    components.html(table_html, height=700, scrolling=False)
+            min-height: 28px !important;
+            height: 28px !important;
+            padding: 2px 8px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     csv = df_f.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Baixar CSV filtrado", csv, "leads.csv", "text/csv")
