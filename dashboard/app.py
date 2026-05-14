@@ -25,6 +25,7 @@ import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 from db.connection import get_conn
 
@@ -900,159 +901,136 @@ with aba_leads:
         except (ValueError, KeyError):
             pass
 
-    # ====== Paginacao + tabela com botao NATIVO por linha ======
-    PAGE_SIZE = 25
-    total_pages = max(1, (len(df_f) + PAGE_SIZE - 1) // PAGE_SIZE)
-    pg_col1, pg_col2, pg_col3 = st.columns([1, 4, 1])
-    with pg_col1:
-        current_page = st.number_input(
-            "Página", min_value=1, max_value=total_pages, value=1, step=1, key="leads_page_num"
-        )
-    with pg_col2:
-        st.caption(
-            f"Mostrando {(current_page - 1) * PAGE_SIZE + 1}–"
-            f"{min(current_page * PAGE_SIZE, len(df_f))} de {len(df_f)} leads · "
-            f"Cada linha tem botão 📋 que abre a ficha NESTA janela."
-        )
-
-    start_idx = (current_page - 1) * PAGE_SIZE
-    df_page = df_f.iloc[start_idx:start_idx + PAGE_SIZE]
-
-    def _esc(v):
-        if v is None or (isinstance(v, float) and pd.isna(v)):
-            return ""
-        s = str(v)
-        return s.replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-
-    # CSS injection: transforma st.columns natives em visual de tabela
-    # Marker .table-leads-start ativa o estilo só pros stHorizontalBlock seguintes
-    st.markdown(
-        """
-        <style>
-        /* Container das linhas — borders entre colunas, padding tight, fonte menor */
-        .table-leads-start ~ div[data-testid="stHorizontalBlock"] {
-            border-bottom: 1px solid #2a2a2a !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            gap: 0 !important;
-            min-height: 0 !important;
-        }
-        .table-leads-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"] {
-            border-right: 1px solid #2a2a2a !important;
-            padding: 4px 8px !important;
-            font-size: 12px !important;
-            line-height: 1.3 !important;
-            min-width: 0 !important;
-            display: flex !important;
-            align-items: center !important;
-        }
-        .table-leads-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"]:last-child {
-            border-right: none !important;
-        }
-        /* Markdown <p> sem margem */
-        .table-leads-start ~ div[data-testid="stHorizontalBlock"] div[data-testid="column"] p {
-            margin: 0 !important; font-size: 12px !important;
-        }
-        /* Botão 📋: laranja, compacto */
-        .table-leads-start ~ div[data-testid="stHorizontalBlock"] button {
-            background: #ff4b4b !important;
-            color: white !important;
-            border: none !important;
-            padding: 3px 8px !important;
-            min-height: 26px !important;
-            height: 26px !important;
-            border-radius: 4px !important;
-            font-size: 13px !important;
-            transition: background 0.15s !important;
-        }
-        .table-leads-start ~ div[data-testid="stHorizontalBlock"] button:hover {
-            background: #ff8c42 !important;
-        }
-        /* Hover na linha inteira */
-        .table-leads-start ~ div[data-testid="stHorizontalBlock"]:hover {
-            background: rgba(255, 75, 75, 0.04);
-        }
-        /* Cabeçalho com fundo destacado */
-        .table-leads-header div[data-testid="column"] {
-            background: #1a1a1a !important;
-            border-bottom: 2px solid #444 !important;
-            border-right: 1px solid #2a2a2a !important;
-            padding: 8px 8px !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+    # ====== TABELA AGGRID — scroll virtual + botao por linha ======
+    st.caption(
+        f"📊 **{len(df_f)} leads** · "
+        f"Scroll infinito · Clica no 📋 da linha pra abrir ficha NESTA janela."
     )
 
-    # Cabeçalho da tabela
-    COL_W = [0.55, 1.3, 1.5, 0.9, 1.0, 1.9, 1.4, 1.3]
-    headers = ["📋", "Score 🔥", "Sinais 🎯", "Cidade", "Nicho", "Nome", "Telefone", "Responsável"]
-    st.markdown('<div class="table-leads-header-marker"></div>', unsafe_allow_html=True)
-    h = st.columns(COL_W)
-    for col, lbl in zip(h, headers):
-        col.markdown(
-            f"<div style='font-size:10.5px;font-weight:700;color:#aaa;"
-            f"text-transform:uppercase;letter-spacing:0.6px;"
-            f"background:#1a1a1a;padding:8px 4px;margin:-4px -8px;border-bottom:2px solid #444;'>{lbl}</div>",
-            unsafe_allow_html=True,
-        )
+    # Prepara DataFrame pra exibicao no AgGrid
+    df_grid = df_f[[
+        "id", "score_temperatura", "nome", "telefone", "cidade_tag", "nicho",
+        "interest_count", "interest_categorias", "responsavel"
+    ]].copy()
+    df_grid["score_rel"] = df_grid["score_temperatura"].apply(_score_relativo)
+    df_grid["telefone"] = df_grid["telefone"].fillna("—")
+    df_grid["responsavel"] = df_grid["responsavel"].fillna("—")
+    df_grid["interest_categorias"] = df_grid["interest_categorias"].fillna("")
+    df_grid["nicho"] = df_grid["nicho"].fillna("—")
+    df_grid["cidade_tag"] = df_grid["cidade_tag"].fillna("—")
 
-    # MARCADOR — CSS acima só vale pros stHorizontalBlock seguintes
-    st.markdown('<div class="table-leads-start"></div>', unsafe_allow_html=True)
+    # Cell renderer pro botao 📋 — click chama setSelectedRows pra dialog abrir
+    btn_renderer = JsCode("""
+    class BtnRenderer {
+        init(params) {
+            this.params = params;
+            this.eGui = document.createElement('button');
+            this.eGui.innerHTML = '📋';
+            this.eGui.style.cssText = `
+                background: #ff4b4b; color: white; border: none;
+                padding: 4px 10px; border-radius: 4px;
+                font-size: 14px; cursor: pointer; line-height: 1;
+                transition: background 0.15s, transform 0.1s;
+            `;
+            this.eGui.onmouseenter = () => {
+                this.eGui.style.background = '#ff8c42';
+                this.eGui.style.transform = 'scale(1.1)';
+            };
+            this.eGui.onmouseleave = () => {
+                this.eGui.style.background = '#ff4b4b';
+                this.eGui.style.transform = 'scale(1)';
+            };
+            this.eGui.addEventListener('click', () => {
+                params.node.setSelected(true, true);  // single-select
+            });
+        }
+        getGui() { return this.eGui; }
+        refresh() { return false; }
+    }
+    """)
 
-    # Linhas nativas — 25 por página, click no botao abre dialog SEM nova aba
-    for _, row in df_page.iterrows():
-        lead_id_row = int(row["id"])
-        raw_score = int(row["score_temperatura"])
-        score = _score_relativo(raw_score)
+    # Score progress bar renderer (HTML gradient)
+    score_renderer = JsCode("""
+    function(params) {
+        const score = params.value || 0;
+        let grad, prefix;
+        if (score >= 90) { prefix = '🔥 '; grad = 'linear-gradient(90deg,#ff4b4b,#ff8c42)'; }
+        else if (score >= 60) { prefix = ''; grad = 'linear-gradient(90deg,#ff8c42,#ffa726)'; }
+        else if (score >= 30) { prefix = ''; grad = 'linear-gradient(90deg,#fbc02d,#fdd835)'; }
+        else { prefix = ''; grad = 'linear-gradient(90deg,#546e7a,#78909c)'; }
+        return `<div style="background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;margin-top:3px;">
+            <div style="background:${grad};height:100%;width:${score}%;"></div>
+            <div style="position:absolute;top:0;left:0;right:0;text-align:center;line-height:18px;font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.7);">${prefix}${score}%</div>
+        </div>`;
+    }
+    """)
 
-        if score >= 90:
-            prefix, grad = "🔥 ", "linear-gradient(90deg,#ff4b4b,#ff8c42)"
-        elif score >= 60:
-            prefix, grad = "", "linear-gradient(90deg,#ff8c42,#ffa726)"
-        elif score >= 30:
-            prefix, grad = "", "linear-gradient(90deg,#fbc02d,#fdd835)"
+    # Sinais renderer (count + categorias)
+    sinais_renderer = JsCode("""
+    function(params) {
+        const count = params.data.interest_count || 0;
+        const cats = params.data.interest_categorias || '';
+        if (count > 0) {
+            const catsPart = cats ? `<span style="color:#888;font-size:10px;display:block;line-height:1.2;margin-top:2px;">(${cats})</span>` : '';
+            return `<span style="color:#4caf50;font-weight:600;">🎯 ${count}</span>${catsPart}`;
+        }
+        return '<span style="color:#555;">○ 0</span>';
+    }
+    """)
+
+    # Telefone renderer (clicavel pro wa.me)
+    tel_renderer = JsCode("""
+    function(params) {
+        const tel = params.value;
+        if (!tel || tel === '—') return '<span style="color:#555;">—</span>';
+        const clean = tel.replace(/[^\\d\\+]/g, '').replace(/^\\+/, '');
+        return `<a href="https://wa.me/${clean}" target="_blank" style="color:#4caf50;text-decoration:none;">${tel}</a>`;
+    }
+    """)
+
+    gb = GridOptionsBuilder.from_dataframe(df_grid)
+    gb.configure_default_column(resizable=True, sortable=True, filter=True, suppressHeaderMenuButton=False)
+    gb.configure_column("id", header_name="ID", width=70, hide=True)
+    gb.configure_column("_btn", header_name="📋", width=60, cellRenderer=btn_renderer, suppressMenu=True, sortable=False, filter=False, pinned="left")
+    gb.configure_column("score_rel", header_name="Score 🔥", width=120, cellRenderer=score_renderer, type=["numericColumn"])
+    gb.configure_column("interest_count", header_name="Sinais 🎯", width=150, cellRenderer=sinais_renderer)
+    gb.configure_column("interest_categorias", hide=True)
+    gb.configure_column("score_temperatura", hide=True)
+    gb.configure_column("nome", header_name="Nome", flex=2)
+    gb.configure_column("telefone", header_name="Telefone", width=160, cellRenderer=tel_renderer)
+    gb.configure_column("cidade_tag", header_name="Cidade", width=110)
+    gb.configure_column("nicho", header_name="Nicho", width=140)
+    gb.configure_column("responsavel", header_name="Responsável", width=160)
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
+
+    # Adiciona coluna virtual _btn (vazia, so pro renderer)
+    df_grid.insert(0, "_btn", "")
+
+    grid_options = gb.build()
+
+    response = AgGrid(
+        df_grid,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        fit_columns_on_grid_load=False,
+        allow_unsafe_jscode=True,
+        theme="streamlit",
+        height=650,
+        key="leads_aggrid",
+    )
+
+    # Click no botao 📋 → setSelectedRows → response['selected_rows'] populado → abre dialog
+    sel = response.get("selected_rows")
+    if sel is not None and len(sel) > 0:
+        # selected_rows pode ser DataFrame ou list de dicts dependendo da versao
+        if isinstance(sel, pd.DataFrame):
+            lead_id_clicked = int(sel.iloc[0]["id"])
         else:
-            prefix, grad = "", "linear-gradient(90deg,#546e7a,#78909c)"
-
-        score_html = (
-            f'<div class="score-bar-outer" title="Raw: {raw_score} pts · Relativo: {score}%">'
-            f'<div class="score-bar-fill" style="background:{grad};width:{score}%;"></div>'
-            f'<div class="score-bar-label">{prefix}{score}%</div>'
-            f'</div>'
-        )
-
-        sinais = int(row.get("interest_count") or 0)
-        cats = row.get("interest_categorias")
-        if sinais > 0:
-            cats_part = f'<span class="sinal-cats">({_esc(cats)})</span>' if cats and not pd.isna(cats) else ""
-            sinais_html = f'<span class="sinal-count">🎯 {sinais}</span>{cats_part}'
-        else:
-            sinais_html = '<span class="empty-cell">○ 0</span>'
-
-        c = st.columns(COL_W)
-
-        # Botão NATIVO Streamlit — click chama show_lead_dialog NA MESMA JANELA
-        if c[0].button("📋", key=f"open_ficha_{lead_id_row}", help=f"Abrir ficha do lead #{lead_id_row}"):
-            show_lead_dialog(lead_id_row)
-        c[1].markdown(score_html, unsafe_allow_html=True)
-        c[2].markdown(sinais_html, unsafe_allow_html=True)
-        c[3].markdown(f"<span style='font-size:12px;'>{_esc(row['cidade_tag']) or '—'}</span>", unsafe_allow_html=True)
-        c[4].markdown(f"<span style='font-size:11px;'>{_esc(row['nicho']) or '—'}</span>", unsafe_allow_html=True)
-        c[5].markdown(f"<span style='font-size:12px;font-weight:500;'>{_esc(row['nome']) or '(sem nome)'}</span>", unsafe_allow_html=True)
-
-        tel = row["telefone"]
-        if tel and not pd.isna(tel):
-            wa = _wa_url(tel)
-            c[6].markdown(f"<a href='{wa}' target='_blank' style='color:#4caf50;text-decoration:none;font-size:12px;'>{_esc(tel)}</a>", unsafe_allow_html=True)
-        else:
-            c[6].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
-
-        resp = row.get("responsavel")
-        if resp and not pd.isna(resp):
-            c[7].markdown(f"<span style='font-size:11px;'>{_esc(resp)}</span>", unsafe_allow_html=True)
-        else:
-            c[7].markdown("<span style='color:#555;'>—</span>", unsafe_allow_html=True)
+            lead_id_clicked = int(sel[0]["id"])
+        # Evita reabrir se mesmo lead já foi mostrado
+        if st.session_state.get("aggrid_opened_lead") != lead_id_clicked:
+            st.session_state["aggrid_opened_lead"] = lead_id_clicked
+            show_lead_dialog(lead_id_clicked)
 
 
     csv = df_f.to_csv(index=False).encode("utf-8")
