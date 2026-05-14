@@ -26,6 +26,7 @@ class InterestSignal:
     boost: int
     source_name: str = ""   # qual fonte detectou (instagram, tiktok, news, ...)
     source_url: str = ""    # URL especifica onde o trecho foi visto
+    n_ocorrencias: int = 1  # quantas vezes a keyword apareceu (score conta 1x)
 
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "interest_keywords.yaml"

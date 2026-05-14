@@ -433,21 +433,19 @@ async def aprofundar_v2(
             log.debug(f"cnpj falhou: {e}")
 
     # ---- DETECCAO: roda SO no conteudo de paginas reais ----
-    # DEDUP: a mesma frase repetida (mesma categoria + keyword + trecho) NAO
-    # conta como sinal novo — varias paginas do site repetem o mesmo rodape.
-    all_sinais = []
+    # DEDUP por KEYWORD: cada keyword vira UM unico sinal, com n_ocorrencias
+    # contando quantas vezes apareceu. Score conta a keyword 1x so.
+    # ("agendamento online" 5x = 1 sinal "(5x)", nao 5 sinais.)
+    sinais_por_kw: dict = {}   # (categoria, palavra_chave) -> InterestSignal
     categorias_aplicadas = set()
-    sinais_vistos: set = set()
     boost_total = 0
     for url, texto in res.textos_por_url.items():
         sinais_da_pagina, _ = detect(texto)
         for s in sinais_da_pagina:
-            # chave de dedup: categoria + keyword + trecho normalizado
-            chave = (s.categoria, s.palavra_chave,
-                     re.sub(r"\s+", " ", (s.trecho or "").lower()).strip())
-            if chave in sinais_vistos:
+            chave = (s.categoria, s.palavra_chave)
+            if chave in sinais_por_kw:
+                sinais_por_kw[chave].n_ocorrencias += 1
                 continue
-            sinais_vistos.add(chave)
 
             s.source_url = url  # URL REAL E VERIFICAVEL da pagina onde foi visto
             # source_name = tipo de fonte (deduz da url)
@@ -461,12 +459,12 @@ async def aprofundar_v2(
                 s.source_name = "vaga"
             else:
                 s.source_name = "site"
-            all_sinais.append(s)
+            sinais_por_kw[chave] = s
             if s.categoria not in categorias_aplicadas:
                 categorias_aplicadas.add(s.categoria)
                 boost_total += s.boost
 
-    res.sinais = all_sinais
+    res.sinais = list(sinais_por_kw.values())
     res.boost_score = min(boost_total, 100)
 
     log.info(

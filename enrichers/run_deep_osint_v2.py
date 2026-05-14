@@ -57,8 +57,8 @@ SQL_INSERT_SOCIAL = """
 """
 
 SQL_INSERT_INTEREST = """
-    INSERT INTO intent_signals (lead_id, categoria, palavra_chave, trecho_texto, source_url, boost)
-    VALUES (%s, %s, %s, %s, %s, %s)
+    INSERT INTO intent_signals (lead_id, categoria, palavra_chave, trecho_texto, source_url, boost, n_ocorrencias)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
 """
 
 
@@ -139,7 +139,8 @@ async def main(limit: int = 1000) -> None:
                 cur.execute(
                     SQL_INSERT_INTEREST,
                     (lead["id"], f"interest_{s.categoria}", s.palavra_chave,
-                     s.trecho[:500], s.source_url or None, s.boost),
+                     s.trecho[:500], s.source_url or None, s.boost,
+                     getattr(s, "n_ocorrencias", 1)),
                 )
 
             # Salva perfis sociais (só os que temos URL real)

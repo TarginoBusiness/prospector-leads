@@ -249,7 +249,8 @@ def load_lead_full(lead_id: int) -> dict:
 
         cur.execute(
             """
-            SELECT categoria, palavra_chave, trecho_texto, source_url, boost, captured_at
+            SELECT categoria, palavra_chave, trecho_texto, source_url, boost,
+                   n_ocorrencias, captured_at
             FROM intent_signals WHERE lead_id = %s ORDER BY captured_at DESC
             """,
             (lead_id,),
@@ -554,6 +555,8 @@ def show_lead_dialog(lead_id: int) -> None:
             href = _text_fragment_url(base_url, trecho, s.get("palavra_chave", ""))
 
             preview = trecho[:200] if trecho else "(sem trecho)"
+            n_ocor = int(s.get("n_ocorrencias") or 1)
+            ocor_txt = f" ({n_ocor}x)" if n_ocor > 1 else ""
 
             # Paleta: AMARELO pra demanda explícita, verde pro resto
             if is_demanda:
@@ -580,7 +583,7 @@ def show_lead_dialog(lead_id: int) -> None:
                   <strong style="color:{txt_col};">{emoji} {label}</strong>
                   <span style="color:#aaa;">·</span>
                   <span style="font-size:12px;color:#aaa;">keyword:</span>
-                  <code style="background:{code_bg};color:{txt_col};padding:1px 5px;border-radius:3px;">{s['palavra_chave']}</code>
+                  <code style="background:{code_bg};color:{txt_col};padding:1px 5px;border-radius:3px;">{s['palavra_chave']}{ocor_txt}</code>
                   <code style="background:{code_bg};color:{txt_col};padding:1px 5px;border-radius:3px;">+{s['boost']}</code>
                   {link_html}
                 </div>

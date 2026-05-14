@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS intent_signals (
     captured_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_intent_lead ON intent_signals(lead_id);
+-- Quantas vezes a MESMA keyword apareceu (conta score 1x, mostra "(Nx)" na ficha)
+ALTER TABLE intent_signals ADD COLUMN IF NOT EXISTS n_ocorrencias INT NOT NULL DEFAULT 1;
 
 -- Log de execucoes de scraper
 CREATE TABLE IF NOT EXISTS scrape_runs (
