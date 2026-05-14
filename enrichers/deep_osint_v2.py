@@ -31,6 +31,7 @@ from urllib.parse import quote, unquote, urlparse
 import httpx
 from selectolax.parser import HTMLParser
 
+from enrichers.extractors import _validate_cnpj, extract_all
 from enrichers.interest_detector import InterestSignal, detect
 from enrichers.sources import cnpj_socios
 
@@ -47,6 +48,8 @@ class DeepOsintV2Result:
     linkedin_url: str = ""
     vaga_urls: list = field(default_factory=list)
     cnpj_data: dict = field(default_factory=dict)
+    # contatos colhidos das paginas visitadas (email/telefone/whatsapp)
+    contatos: dict = field(default_factory=dict)
     # textos_por_url: {url: texto} — cada texto vira detect com source_url=url
     textos_por_url: dict = field(default_factory=dict)
     fontes_consultadas: list[str] = field(default_factory=list)
@@ -305,6 +308,9 @@ async def aprofundar_v2(
                 res.textos_por_url[url] = texto
                 res.fontes_consultadas.append(fonte)
 
+        # ---- FASE 2.5: colhe contatos (email/tel/whatsapp) das paginas ----
+        res.contatos = _extrair_contatos_de_textos(res.textos_por_url)
+
         # ---- FASE 3: CNPJ via BrasilAPI (dado estruturado direto) ----
         # Prioridade: 1) CNPJ ja conhecido  2) CNPJ no rodape do site visitado
         # (confiavel, sem DDG)  3) descoberta via dorks DDG (fallback).
@@ -380,12 +386,27 @@ _CNPJ_RE = re.compile(r"\b(\d{2}\.?\d{3}\.?\d{3}/\d{4}-?\d{2})\b")
 def _extrair_cnpj_de_textos(textos_por_url: dict) -> str:
     """
     Varre o texto das paginas visitadas (home, /sobre, rodape...) procurando
-    um CNPJ. Retorna os 14 digitos limpos do primeiro encontrado, ou "".
+    um CNPJ MATEMATICAMENTE VALIDO (digitos verificadores conferem). Retorna
+    os 14 digitos limpos do primeiro valido encontrado, ou "".
     """
     for texto in textos_por_url.values():
-        m = _CNPJ_RE.search(texto or "")
-        if m:
+        for m in _CNPJ_RE.finditer(texto or ""):
             limpo = re.sub(r"\D", "", m.group(1))
-            if len(limpo) == 14:
+            if len(limpo) == 14 and _validate_cnpj(limpo):
                 return limpo
     return ""
+
+
+def _extrair_contatos_de_textos(textos_por_url: dict) -> dict:
+    """
+    Roda os extratores de contato (email/telefone/whatsapp) em TODO o texto
+    das paginas visitadas — pega o que estava em /contato, /sobre, rodape etc.
+    Retorna {"emails": [...], "telefones": [...], "whatsapp_urls": [...]}.
+    """
+    texto_total = " ".join(t for t in textos_por_url.values() if t)
+    ci = extract_all(texto_total)
+    return {
+        "emails": ci.emails,
+        "telefones": ci.telefones,
+        "whatsapp_urls": ci.whatsapp_urls,
+    }

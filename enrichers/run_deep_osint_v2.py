@@ -168,24 +168,31 @@ async def main(limit: int = 1000) -> None:
                     "categorias": categorias,
                     "captured_at": datetime.now(timezone.utc).isoformat(),
                     "cnpj_data": r.cnpj_data,
+                    "contatos": r.contatos,
                     "linkedin_url": r.linkedin_url,
                     "vaga_urls": r.vaga_urls[:3],
                     "paginas_visitadas": list(r.textos_por_url.keys())[:10],
                 }
             }
 
-            # email da Receita (so usa se for um email valido de verdade)
-            email_receita = ""
+            # email descoberto: 1) Receita  2) colhido do site (/contato, rodape)
+            email_descoberto = ""
             if r.cnpj_data:
                 ev = (r.cnpj_data.get("email") or "").strip()
                 if "@" in ev and "." in ev:
-                    email_receita = ev
+                    email_descoberto = ev
+            if not email_descoberto:
+                for ev in (r.contatos.get("emails") or []):
+                    ev = (ev or "").strip()
+                    if "@" in ev and "." in ev:
+                        email_descoberto = ev
+                        break
 
             cur.execute(SQL_UPDATE_LEAD, {
                 "id": lead["id"],
                 "boost": r.boost_score,
                 "cnpj": r.cnpj_data.get("cnpj") if r.cnpj_data else None,
-                "email_receita": email_receita or None,
+                "email_receita": email_descoberto or None,
                 "breakdown_extra": json.dumps(breakdown_extra),
                 "payload_extra": json.dumps(payload_extra),
             })

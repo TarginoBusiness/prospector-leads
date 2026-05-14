@@ -407,14 +407,82 @@ def show_lead_dialog(lead_id: int) -> None:
         st.markdown(f"**🌐 Fonte:** `{lead['source']}`")
         st.markdown(f"**📊 Status:** `{lead['status']}`")
 
-    # ====== Dados da Receita (CNPJ + sócios via BrasilAPI) ======
+    # ====== parse raw_payload (usado por varios blocos abaixo) ======
     raw_payload = lead.get("raw_payload") or {}
     if isinstance(raw_payload, str):
         try:
             raw_payload = json.loads(raw_payload)
         except Exception:
             raw_payload = {}
-    cnpj_data = ((raw_payload.get("deep_osint_v2") or {}).get("cnpj_data")) or {}
+    dov2 = raw_payload.get("deep_osint_v2") or {}
+    deep_enrich = raw_payload.get("deep_enrich") or {}
+    gmaps_rp = raw_payload.get("gmaps") or {}
+    cnpj_data = dov2.get("cnpj_data") or {}
+
+    # ====== 📇 Contatos & Perfis (tudo que conseguimos cruzar) ======
+    st.divider()
+    st.markdown("#### 📇 Contatos & Perfis")
+
+    socials = lead.get("social_profiles") or []
+    def _sp_url(plat_keys, url_substr=None):
+        """Acha a URL de um perfil em social_profiles por plataforma ou substring."""
+        for sp in socials:
+            plat = (sp.get("plataforma") or "").lower()
+            url = sp.get("url") or ""
+            if plat in plat_keys:
+                return url
+            if url_substr and url_substr in url.lower():
+                return url
+        return ""
+
+    endereco = (
+        (cnpj_data.get("endereco_completo") or "").strip()
+        or (deep_enrich.get("endereco") or "").strip()
+        or (gmaps_rp.get("endereco") or "").strip()
+    )
+    responsavel = ""
+    if cnpj_data.get("socios"):
+        responsavel = cnpj_data["socios"][0].get("nome") or ""
+
+    insta = _sp_url({"instagram"}, "instagram.com") or deep_enrich.get("instagram", "")
+    face = _sp_url({"facebook"}, "facebook.com") or deep_enrich.get("facebook", "")
+    linkedin = _sp_url({"linkedin"}, "linkedin.com") or dov2.get("linkedin_url", "")
+    site = _sp_url({"site"}, None) or deep_enrich.get("site", "")
+    getninjas = _sp_url(set(), "getninjas")
+    workana = _sp_url(set(), "workana")
+
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        st.markdown(f"**📧 Email:** {lead['email'] or '—'}")
+        st.markdown(f"**🏢 CNPJ:** {lead['cnpj'] or cnpj_data.get('cnpj') or '—'}")
+        st.markdown(f"**👤 Responsável:** {responsavel or '—'}")
+        st.markdown(f"**📌 Endereço:** {endereco or '—'}")
+    with cc2:
+        def _link(label, url):
+            return f"{label} [abrir]({url})" if url else f"{label} —"
+        st.markdown("**📸 Instagram:** " + ("[abrir](%s)" % insta if insta else "—"))
+        st.markdown("**📘 Facebook:** " + ("[abrir](%s)" % face if face else "—"))
+        st.markdown("**💼 LinkedIn:** " + ("[abrir](%s)" % linkedin if linkedin else "—"))
+        st.markdown("**🌐 Site:** " + ("[abrir](%s)" % site if site else "—"))
+    if getninjas or workana:
+        extra = []
+        if getninjas:
+            extra.append(f"[GetNinjas]({getninjas})")
+        if workana:
+            extra.append(f"[Workana]({workana})")
+        st.markdown("**🧰 Plataformas de serviço:** " + " · ".join(extra))
+
+    # Contatos extras colhidos do site (/contato, /sobre, rodapé)
+    contatos = dov2.get("contatos") or {}
+    extra_emails = [e for e in (contatos.get("emails") or []) if e != lead.get("email")]
+    extra_tels = [t for t in (contatos.get("telefones") or []) if t != lead.get("telefone")]
+    if extra_emails or extra_tels:
+        partes = []
+        if extra_emails:
+            partes.append("📧 " + ", ".join(extra_emails[:4]))
+        if extra_tels:
+            partes.append("📞 " + ", ".join(extra_tels[:4]))
+        st.caption("Outros contatos colhidos do site: " + " · ".join(partes))
 
     if cnpj_data:
         st.divider()
@@ -555,34 +623,14 @@ def show_lead_dialog(lead_id: int) -> None:
 
     st.divider()
 
-    # Perfis sociais
-    socials = lead.get("social_profiles") or []
+    # Perfis sociais — detalhe (confiança + fonte). O resumo já está em "Contatos & Perfis".
     if socials:
-        st.markdown("#### 🌐 Perfis sociais cruzados")
-        for sp in socials:
-            st.markdown(f"- **{sp['plataforma']}** · [abrir]({sp['url']}) · confiança {sp['confianca']}% · via `{sp['fonte']}`")
+        with st.expander(f"🌐 Perfis sociais cruzados ({len(socials)}) — detalhe", expanded=False):
+            for sp in socials:
+                st.markdown(f"- **{sp['plataforma']}** · [abrir]({sp['url']}) · confiança {sp['confianca']}% · via `{sp['fonte']}`")
 
-    st.divider()
-
-    # Quadro societario (do CNPJ via BrasilAPI)
-    rp_for_socios = lead.get("raw_payload") or {}
-    if isinstance(rp_for_socios, str):
-        try:
-            rp_for_socios = json.loads(rp_for_socios)
-        except Exception:
-            rp_for_socios = {}
-    cnpj_data = (rp_for_socios.get("deep_osint_v2") or {}).get("cnpj_data") or {}
-    if cnpj_data and cnpj_data.get("socios"):
-        st.markdown("#### 👥 Quadro societário (Receita Federal via BrasilAPI)")
-        st.caption(
-            f"**{cnpj_data.get('razao_social') or '—'}** ({cnpj_data.get('nome_fantasia') or 'sem fantasia'}) · "
-            f"CNAE: {cnpj_data.get('cnae_principal') or '—'} · "
-            f"Porte: {cnpj_data.get('porte') or '—'}"
-        )
-        for s in cnpj_data["socios"]:
-            st.markdown(
-                f"- **{s['nome']}** — {s['qualificacao']} (desde {s['data_entrada'] or '—'})"
-            )
+    # rp_for_socios mantido por compat com os blocos abaixo
+    rp_for_socios = raw_payload
 
     # Reclame Aqui (pain points)
     reclame = (rp_for_socios.get("deep_osint_v2") or {}).get("reclame_aqui") or {}
