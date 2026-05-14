@@ -472,6 +472,10 @@ def show_lead_dialog(lead_id: int) -> None:
             extra.append(f"[Workana]({workana})")
         st.markdown("**🧰 Plataformas de serviço:** " + " · ".join(extra))
 
+    ig_bio = (dov2.get("instagram_bio") or "").strip()
+    if ig_bio:
+        st.caption(f"📸 Bio do Instagram: _{ig_bio[:280]}_")
+
     # Contatos extras colhidos do site (/contato, /sobre, rodapé)
     contatos = dov2.get("contatos") or {}
     extra_emails = [e for e in (contatos.get("emails") or []) if e != lead.get("email")]

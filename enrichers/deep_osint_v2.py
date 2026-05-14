@@ -33,7 +33,7 @@ from selectolax.parser import HTMLParser
 
 from enrichers.extractors import _validate_cnpj, extract_all
 from enrichers.interest_detector import InterestSignal, detect
-from enrichers.sources import cnpj_socios
+from enrichers.sources import cnpj_socios, instagram
 
 log = logging.getLogger("enricher.deep_osint_v2")
 
@@ -47,6 +47,7 @@ class DeepOsintV2Result:
     site_url: str = ""
     linkedin_url: str = ""
     tiktok_url: str = ""
+    instagram_bio: str = ""
     vaga_urls: list = field(default_factory=list)
     cnpj_data: dict = field(default_factory=dict)
     # contatos colhidos das paginas visitadas (email/telefone/whatsapp)
@@ -192,9 +193,19 @@ def _extrair_social_links(trees: list) -> dict:
             continue
         for a in tree.css("a"):
             href = (a.attributes.get("href") or "").strip()
+            if not href:
+                continue
+            # normaliza URL protocolo-relativo (//instagram.com/...) e sem esquema
+            if href.startswith("//"):
+                href = "https:" + href
             low = href.lower()
             if not low.startswith("http"):
-                continue
+                # href tipo "instagram.com/empresa" sem esquema
+                if any(d in low for d in plats.values()):
+                    href = "https://" + href.lstrip("/")
+                    low = href.lower()
+                else:
+                    continue
             for plat, dom in plats.items():
                 if plat in out or dom not in low:
                     continue
@@ -377,6 +388,15 @@ async def aprofundar_v2(
             res.linkedin_url = site_socials["linkedin"]
         res.tiktok_url = site_socials.get("tiktok", "")
 
+        # Fallback: se nem o enrich nem o site deram Instagram, procura via
+        # DDG dork e valida pela bio (cruza nome/cidade).
+        if not res.instagram_url:
+            ig_url, ig_bio = await _descobrir_instagram(client, nome, cidade)
+            if ig_url:
+                res.instagram_url = ig_url
+                res.instagram_bio = ig_bio
+                res.fontes_consultadas.append("instagram_dork")
+
         for (fonte, url), texto in zip(paginas_pra_visitar, outras_textos):
             if texto and len(texto) > 50:
                 res.textos_por_url[url] = texto
@@ -494,3 +514,35 @@ def _extrair_contatos_de_textos(textos_por_url: dict) -> dict:
         "telefones": ci.telefones,
         "whatsapp_urls": ci.whatsapp_urls,
     }
+
+
+async def _descobrir_instagram(client: httpx.AsyncClient, nome: str,
+                               cidade: str) -> tuple[str, str]:
+    """
+    Fallback: quando o site nao tem link pro Instagram, procura o perfil
+    via DDG dork (site:instagram.com "nome" "cidade") e pega a bio publica.
+    Cross-check leve: confere se tokens do nome OU a cidade aparecem na
+    bio/handle — assim sabemos que eh o perfil certo, nao um xara.
+    Retorna (url, bio). url="" se nao achou ou se nao bateu nada.
+    """
+    try:
+        url = await instagram.buscar_perfil(client, nome, cidade)
+        if not url:
+            return "", ""
+        perfil = await instagram.coletar_perfil(client, url)
+        bio = perfil.get("bio", "") or ""
+        alvo = (url + " " + bio).lower()
+        nome_tokens = [t for t in re.findall(r"\w+", nome.lower()) if len(t) >= 4]
+        cidade_tok = cidade.split()[0].lower() if cidade else ""
+        bate = (
+            any(t in alvo for t in nome_tokens)
+            or (cidade_tok and cidade_tok in alvo)
+        )
+        # se nao tem token util pra checar, confia no dork (ja era nome+cidade)
+        if bate or not nome_tokens:
+            return url, bio
+        log.debug(f"  instagram {url} nao cruzou com '{nome}' — descartado")
+        return "", ""
+    except Exception as e:
+        log.debug(f"_descobrir_instagram falhou: {e}")
+        return "", ""

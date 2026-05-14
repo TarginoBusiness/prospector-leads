@@ -178,6 +178,7 @@ async def main(limit: int = 1000) -> None:
                     "captured_at": datetime.now(timezone.utc).isoformat(),
                     "cnpj_data": r.cnpj_data,
                     "contatos": r.contatos,
+                    "instagram_bio": r.instagram_bio,
                     "linkedin_url": r.linkedin_url,
                     "vaga_urls": r.vaga_urls[:3],
                     "paginas_visitadas": list(r.textos_por_url.keys())[:10],
