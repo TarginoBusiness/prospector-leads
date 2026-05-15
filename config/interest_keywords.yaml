@@ -1,108 +1,78 @@
-# Sinais de INTERESSE passivo da empresa-lead.
-# Diferente de intent_keywords.yaml (que e pedido explicito "preciso de"),
-# interest_keywords e mencao em qualquer contexto: site, bio do Instagram,
-# anuncio de vaga, post recente, etc. Sinal de "to no momento certo".
+# Sinais de INTERESSE — REGRA: so vale o que indica ATENDIMENTO HUMANO MANUAL.
 #
-# REGRA NOVA: sinais tem PESO DOMINANTE no score. 1 sinal sozinho ja deve
-# elevar significativamente o lead. Lead com 2+ sinais quase sempre vai
-# pro topo do ranking.
+# A pergunta certa pra avaliar uma keyword:
+#   "Isso prova que tem gente respondendo cliente de forma manual?"
+# Se a resposta for "sim", vale boost. Se for "talvez/nao", FORA.
+#
+# REMOVIDAS por nao indicarem atendimento humano:
+#   - "agende sua consulta", "agendamento online", "agende sua avaliacao"
+#     -> pode ser formulario auto-agendamento, nao prova humano
+#   - "inovacao", "tecnologia 4.0", "transformacao digital", "data driven"
+#     -> buzzwords genericas, qualquer site fala
+#   - "chatbot", "atendimento automatico", "resposta automatica", "bot"
+#     -> sinal de que JA tem automacao = nao eh prospecto, eh concorrente
+#   - "inteligencia artificial", "machine learning", "openai"
+#     -> ambiguo (pode estar vendendo IA, ou estudando, ou citando)
+#   - "vaga desenvolvedor", "software house"
+#     -> nao tem relacao com atendimento humano
+#   - "novo site", "site em construcao"
+#     -> nao prova humano atendendo
 
 categorias:
 
-  ia_mencao:
-    descricao: "Empresa ja mencionou IA / chatgpt em algum contexto publico"
-    boost: 40
-    # REMOVIDOS por ambiguidade: 'llm' (= diploma Master of Laws — false
-    # positive em advocacia), 'prompt' (= 'entrega prompt'/'atendimento
-    # prompt'). So termos INEQUIVOCOS de IA.
-    palavras:
-      - inteligencia artificial
-      - chatgpt
-      - chat gpt
-      - machine learning
-      - aprendizado de maquina
-      - agente de ia
-      - agentes de ia
-      - openai
-      - generative ai
-      - ia generativa
-      - automacao com ia
-      - automacao com inteligencia artificial
-      - rede neural
-
-  automacao_mencao:
-    descricao: "Empresa fala sobre automatizar processos"
-    boost: 35
-    # REMOVIDO 'rpa' (acronimo ambiguo demais). Mantidos termos claros.
-    palavras:
-      - automacao
-      - automatizar
-      - automatizamos
-      - automatizado
-      - workflow automatico
-      - fluxo automatizado
-      - processos automaticos
-      - processo automatizado
-      - otimizacao de processos
-      - robotic process automation
-
-  whatsapp_automation:
-    descricao: "Empresa esta no contexto WhatsApp / chatbot (servico principal nosso)"
+  # WhatsApp atendido por HUMANO — alvo cirurgico pra automatizar
+  whatsapp_humano:
+    descricao: "Empresa atende manualmente via WhatsApp — prospecto perfeito"
     boost: 50
     palavras:
-      - whatsapp business
-      - api whatsapp
-      - chatbot
-      - bot de atendimento
-      - atendimento automatico
-      - atendimento 24h
-      - resposta automatica
-      - menu interativo whatsapp
       - atendimento via whatsapp
       - atendimento pelo whatsapp
       - fale conosco pelo whatsapp
+      - fale com a gente no whatsapp
       - chame no whatsapp
-      - agende pelo whatsapp
+      - chame pelo whatsapp
+      - mande mensagem no whatsapp
+      - mande mensagem pelo whatsapp
+      - nosso whatsapp
+      - whatsapp da clinica
+      - whatsapp do consultorio
+      - whatsapp da empresa
+      - converse com a gente no whatsapp
 
-  agendamento_online:
-    descricao: "Empresa ja tem presenca digital ativa (agenda online) — fruto baixo, otimo prospecto pra automacao de atendimento"
-    boost: 25
-    palavras:
-      - agendamento online
-      - agende online
-      - agende sua consulta
-      - agende sua avaliacao
-      - marque sua consulta
-      - agendamento pela internet
-      - agende seu horario
-      - reserva online
-      - formulario de contato
-
-  vaga_tech:
-    descricao: "Empresa tem vaga aberta de tech (vai contratar dev/TI = comprar tech)"
+  # Sinais EXPLICITOS de pessoas atendendo (horario comercial, equipe humana)
+  atendimento_humano:
+    descricao: "Provas de atendimento humano: horario comercial, equipe, atendente"
     boost: 45
     palavras:
-      - vaga desenvolvedor
-      - vaga programador
-      - vaga ti
-      - vaga tecnologia
-      - vaga frontend
-      - vaga backend
-      - vaga fullstack
-      - oportunidade desenvolvedor
-      - contratamos desenvolvedor
-      - estagio tecnologia
-      - software house
+      - horario de atendimento
+      - horarios de atendimento
+      - horario de funcionamento
+      - horarios de funcionamento
+      - atendimento de segunda a sexta
+      - atendimento seg a sex
+      - atendimento de segunda a sabado
+      - atendimento de segunda a domingo
+      - segunda a sexta das
+      - de segunda a sexta-feira
+      - atendimento personalizado
+      - atendimento humanizado
+      - nossa equipe atende
+      - nossa equipe esta pronta
+      - nossa atendente
+      - nosso atendente
+      - nossas atendentes
+      - nossos atendentes
+      - fale com nossa atendente
+      - fale com nosso atendente
+      - fale com nossa equipe
+      - fale com nosso time
+      - secretaria atende
+      - nossa secretaria
 
-  # ===================================================================
-  # DEMANDA EXPLICITA — PESO MAXIMO.
-  # A empresa esta literalmente contratando pra pre-atendimento/atendimento,
-  # ou expressa necessidade do que a gente vende (site, automacao). Esse eh
-  # o sinal mais forte: nao eh "talvez", eh demanda confirmada e verificavel.
-  # Card aparece em AMARELO na ficha do lead.
-  # ===================================================================
+  # DEMANDA EXPLICITA — peso maximo. Estao literalmente contratando pessoa
+  # pra atender (sinal direto de carga de atendimento manual).
   vaga_atendimento:
-    descricao: "DEMANDA EXPLICITA: contratando atendente/recepcao/SAC/pre-atendimento — carga de atendimento manual = prospecto perfeito pra nossa automacao de WhatsApp"
+    descricao: "CONTRATANDO atendente/recepcao/SAC — carga de atendimento manual confirmada"
     boost: 90
     palavras:
       - atendente de whatsapp
@@ -130,55 +100,29 @@ categorias:
       - precisa-se de atendente
       - precisa se de atendente
 
+  # DEMANDA EXPLICITA — pedem o que vendemos
   necessidade_explicita:
-    descricao: "DEMANDA EXPLICITA: empresa expressa necessidade do que vendemos (site, app, automacao). Card AMARELO na ficha."
+    descricao: "Empresa expressa necessidade do que vendemos"
     boost: 80
     palavras:
+      - preciso automatizar
+      - quero automatizar
+      - precisamos automatizar
+      - preciso de um chatbot
+      - quero um chatbot
+      - preciso de um sistema
+      - quero um sistema
+      - precisamos de um sistema
       - precisa de site
       - preciso de um site
       - orcamento de site
       - orcamento para site
       - refazer o site
       - refazer nosso site
-      - site desatualizado
-      - quero um site
-      - desenvolvimento de aplicativo
-      - preciso automatizar
-      - quero automatizar
-      - precisamos automatizar
-      - precisa de chatbot
-      - quero um chatbot
-      - preciso de um sistema
-      - quero um sistema
 
-  site_modernizacao:
-    descricao: "Empresa esta atualizando/refazendo presenca digital"
-    boost: 30
-    # REMOVIDOS genericos: 'reformulacao' (reforma de qualquer coisa).
-    palavras:
-      - site em construcao
-      - novo site
-      - novo portal
-      - reformulacao do site
-      - lancamento digital
-      - nova plataforma digital
-      - novo aplicativo
-
-  transformacao_digital:
-    descricao: "Empresa investe em digitalizacao"
-    boost: 35
-    # REMOVIDO 'inovar' (toda empresa diz isso — generico demais).
-    palavras:
-      - transformacao digital
-      - digitalizacao
-      - inovacao tecnologica
-      - modernizar processos
-      - tecnologia 4.0
-      - industria 4.0
-      - data driven
-
+  # Dor operacional explicita — sinal de atendimento manual caotico
   dor_explicita:
-    descricao: "Empresa expressa pain (frustracao operacional, tempo demais, etc)"
+    descricao: "Reclamacao de processo manual / sobrecarga de atendimento"
     boost: 40
     palavras:
       - planilha demais
@@ -188,7 +132,8 @@ categorias:
       - retrabalho
       - sobrecarga
       - processos manuais
+      - muito tempo no whatsapp
+      - whatsapp atolado
+      - perdemos cliente no whatsapp
 
-# Teto cumulativo de boost (categorias somadas) — sem teto efetivo,
-# multiplos sinais dominam o score
 teto_cumulativo: 100

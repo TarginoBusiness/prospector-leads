@@ -288,7 +288,6 @@ def _wa_url(tel):
 CATEGORIAS_DEMANDA = {
     "vaga_atendimento",
     "necessidade_explicita",
-    "vaga_tech",
     "dor_explicita",
 }
 
