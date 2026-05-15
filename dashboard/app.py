@@ -448,10 +448,11 @@ def show_lead_dialog(lead_id: int) -> None:
 
     insta = _sp_url({"instagram"}, "instagram.com") or deep_enrich.get("instagram", "")
     face = _sp_url({"facebook"}, "facebook.com") or deep_enrich.get("facebook", "")
-    linkedin = _sp_url({"linkedin"}, "linkedin.com") or dov2.get("linkedin_url", "")
+    linkedin = _sp_url({"linkedin"}, None) or dov2.get("linkedin_url", "")
+    linkedin_dono = _sp_url({"linkedin_dono"}, None) or dov2.get("linkedin_dono_url", "")
     site = _sp_url({"site"}, None) or deep_enrich.get("site", "")
-    getninjas = _sp_url(set(), "getninjas")
-    workana = _sp_url(set(), "workana")
+    getninjas = _sp_url({"getninjas"}, "getninjas") or dov2.get("getninjas_url", "")
+    workana = _sp_url({"workana"}, "workana") or dov2.get("workana_url", "")
 
     cc1, cc2 = st.columns(2)
     with cc1:
@@ -464,14 +465,15 @@ def show_lead_dialog(lead_id: int) -> None:
             return f"{label} [abrir]({url})" if url else f"{label} —"
         st.markdown("**📸 Instagram:** " + ("[abrir](%s)" % insta if insta else "—"))
         st.markdown("**📘 Facebook:** " + ("[abrir](%s)" % face if face else "—"))
-        st.markdown("**💼 LinkedIn:** " + ("[abrir](%s)" % linkedin if linkedin else "—"))
+        st.markdown("**💼 LinkedIn (empresa):** " + ("[abrir](%s)" % linkedin if linkedin else "—"))
+        st.markdown("**👤 LinkedIn (responsável):** " + ("[abrir](%s)" % linkedin_dono if linkedin_dono else "—"))
         st.markdown("**🌐 Site:** " + ("[abrir](%s)" % site if site else "—"))
     if getninjas or workana:
         extra = []
-        if getninjas:
-            extra.append(f"[GetNinjas]({getninjas})")
         if workana:
             extra.append(f"[Workana]({workana})")
+        if getninjas:
+            extra.append(f"[GetNinjas]({getninjas})")
         st.markdown("**🧰 Plataformas de serviço:** " + " · ".join(extra))
 
     ig_bio = (dov2.get("instagram_bio") or "").strip()

@@ -45,9 +45,12 @@ class DeepOsintV2Result:
     instagram_url: str = ""
     facebook_url: str = ""
     site_url: str = ""
-    linkedin_url: str = ""
+    linkedin_url: str = ""        # LinkedIn da EMPRESA
+    linkedin_dono_url: str = ""   # LinkedIn do DONO (descoberto via CNPJ socios)
     tiktok_url: str = ""
     instagram_bio: str = ""
+    workana_url: str = ""         # perfil da empresa no Workana
+    getninjas_url: str = ""       # perfil da empresa no GetNinjas
     vaga_urls: list = field(default_factory=list)
     cnpj_data: dict = field(default_factory=dict)
     # contatos colhidos das paginas visitadas (email/telefone/whatsapp)
@@ -468,6 +471,81 @@ async def aprofundar_v2(
                 res.cnpj_data = cnpj_data
         except Exception as e:
             log.debug(f"cnpj falhou: {e}")
+
+        # ---- FASE 4: dorks DIRIGIDOS com dados do CNPJ ----
+        # Agora que temos razao_social, nome_fantasia, dono e municipio,
+        # roda buscas MAIS PRECISAS pra achar:
+        #  - LinkedIn do DONO (responsavel)
+        #  - Perfil da empresa no Workana / GetNinjas
+        #  - Vagas em plataformas (LinkedIn Jobs, Vagas.com, OLX, etc.)
+        if res.cnpj_data and not _busca_desativada:
+            razao = (res.cnpj_data.get("razao_social") or "").strip()
+            fantasia = (res.cnpj_data.get("nome_fantasia") or "").strip() or razao
+            socios = res.cnpj_data.get("socios") or []
+            dono = (socios[0].get("nome") or "").strip() if socios else ""
+            municipio = (res.cnpj_data.get("municipio") or cidade).strip()
+
+            dorks = []
+            if dono:
+                q_dono = f'site:linkedin.com/in "{dono}"'
+                if municipio:
+                    q_dono += f' "{municipio}"'
+                dorks.append(("linkedin_dono", q_dono))
+            if fantasia:
+                # vagas em qualquer plataforma de emprego (atendente/tech)
+                dorks.append((
+                    "vagas_plat",
+                    f'"{fantasia}" vaga (atendente OR recepcionista OR programador OR desenvolvedor OR ti)'
+                    + (f' "{municipio}"' if municipio else "")
+                ))
+                dorks.append(("workana", f'site:workana.com "{fantasia}"'))
+                dorks.append(("getninjas", f'site:getninjas.com.br "{fantasia}"'))
+                dorks.append(("olx_vagas", f'site:olx.com.br "{fantasia}" vaga'))
+
+            if dorks:
+                results = await asyncio.gather(
+                    *[buscar_urls(client, q, max_urls=3) for _, q in dorks]
+                )
+                novas_vaga_urls: list[str] = []
+                for (tipo, _), urls in zip(dorks, results):
+                    if not urls:
+                        continue
+                    if tipo == "linkedin_dono":
+                        for u in urls:
+                            if "linkedin.com/in/" in u.lower():
+                                res.linkedin_dono_url = u.split("?")[0].rstrip("/")
+                                res.fontes_consultadas.append("linkedin_dono")
+                                break
+                    elif tipo == "workana":
+                        for u in urls:
+                            if "workana.com/" in u.lower():
+                                res.workana_url = u.split("?")[0].rstrip("/")
+                                res.fontes_consultadas.append("workana")
+                                break
+                    elif tipo == "getninjas":
+                        for u in urls:
+                            if "getninjas.com" in u.lower():
+                                res.getninjas_url = u.split("?")[0].rstrip("/")
+                                res.fontes_consultadas.append("getninjas")
+                                break
+                    elif tipo in ("vagas_plat", "olx_vagas"):
+                        # urls de vaga relevantes — adiciona pra visitar e detectar
+                        for u in urls[:2]:
+                            if u not in res.vaga_urls and u not in novas_vaga_urls:
+                                # filtra social generico
+                                if not any(x in u for x in ["facebook.com", "instagram.com", "twitter.com"]):
+                                    novas_vaga_urls.append(u)
+
+                # Visita as novas vaga_urls — detect() vai rodar nelas depois
+                if novas_vaga_urls:
+                    textos_extras = await asyncio.gather(
+                        *[visitar(client, u) for u in novas_vaga_urls]
+                    )
+                    for u, t in zip(novas_vaga_urls, textos_extras):
+                        if t and len(t) > 50:
+                            res.textos_por_url[u] = t
+                            res.vaga_urls.append(u)
+                            res.fontes_consultadas.append("vaga_via_cnpj")
 
     # ---- DETECCAO: roda SO no conteudo de paginas reais ----
     # DEDUP por KEYWORD: cada keyword vira UM unico sinal, com n_ocorrencias

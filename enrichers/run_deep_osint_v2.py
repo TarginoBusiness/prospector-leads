@@ -160,6 +160,15 @@ async def main(limit: int = 1000) -> None:
             if r.linkedin_url:
                 cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "linkedin", r.linkedin_url, 90))
                 new_socials += 1
+            if r.linkedin_dono_url:
+                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "linkedin_dono", r.linkedin_dono_url, 85))
+                new_socials += 1
+            if r.workana_url:
+                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "workana", r.workana_url, 80))
+                new_socials += 1
+            if r.getninjas_url:
+                cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "getninjas", r.getninjas_url, 80))
+                new_socials += 1
             for vu in r.vaga_urls:
                 cur.execute(SQL_INSERT_SOCIAL, (lead["id"], "vaga", vu, 80))
                 new_socials += 1
@@ -208,7 +217,10 @@ async def main(limit: int = 1000) -> None:
                     "contatos": r.contatos,
                     "instagram_bio": r.instagram_bio,
                     "linkedin_url": r.linkedin_url,
-                    "vaga_urls": r.vaga_urls[:3],
+                    "linkedin_dono_url": r.linkedin_dono_url,
+                    "workana_url": r.workana_url,
+                    "getninjas_url": r.getninjas_url,
+                    "vaga_urls": r.vaga_urls[:5],
                     "paginas_visitadas": list(r.textos_por_url.keys())[:10],
                 }
             }
