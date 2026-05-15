@@ -41,7 +41,10 @@ SQL_PEGAR_LEADS = """
 
 SQL_UPDATE_LEAD = """
     UPDATE leads SET
-        score_temperatura  = LEAST(100, score_temperatura + %(boost)s),
+        -- Subtrai o boost da rodada ANTERIOR e soma o da rodada nova:
+        -- assim re-rodar nao acumula falso, e o score eh ILIMITADO
+        -- (reflete o peso real das evidencias, nao um 0-100).
+        score_temperatura  = GREATEST(0, score_temperatura - %(prev_boost)s + %(new_boost)s),
         cnpj               = COALESCE(cnpj, %(cnpj)s),
         email              = COALESCE(email, %(email_receita)s),
         score_breakdown    = score_breakdown || %(breakdown_extra)s::jsonb,
@@ -216,6 +219,7 @@ async def main(limit: int = 1000) -> None:
                     "cnpj_data": r.cnpj_data,
                     "contatos": r.contatos,
                     "instagram_bio": r.instagram_bio,
+                    "dive_boost": r.boost_score + dados_boost,
                     "linkedin_url": r.linkedin_url,
                     "linkedin_dono_url": r.linkedin_dono_url,
                     "workana_url": r.workana_url,
@@ -225,9 +229,19 @@ async def main(limit: int = 1000) -> None:
                 }
             }
 
+            # Boost da rodada ANTERIOR (pra subtrair e nao acumular)
+            prev_rp = lead.get("raw_payload") or {}
+            if isinstance(prev_rp, str):
+                try:
+                    prev_rp = json.loads(prev_rp)
+                except Exception:
+                    prev_rp = {}
+            prev_boost = int(((prev_rp.get("deep_osint_v2") or {}).get("dive_boost") or 0))
+
             cur.execute(SQL_UPDATE_LEAD, {
                 "id": lead["id"],
-                "boost": r.boost_score + dados_boost,
+                "prev_boost": prev_boost,
+                "new_boost": r.boost_score + dados_boost,
                 "cnpj": r.cnpj_data.get("cnpj") if r.cnpj_data else None,
                 "email_receita": email_descoberto or None,
                 "breakdown_extra": json.dumps(breakdown_extra),

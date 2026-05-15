@@ -64,7 +64,7 @@ def main() -> None:
             CASE
                 WHEN b.telefone IS NULL
                     THEN LEAST(25, GREATEST(0, b.base_score + COALESCE(ib.total_boost, 0)))
-                ELSE LEAST(100, GREATEST(0, b.base_score + COALESCE(ib.total_boost, 0)))
+                ELSE GREATEST(0, b.base_score + COALESCE(ib.total_boost, 0))
             END AS score
         FROM base b
         LEFT JOIN interest_boost ib ON ib.lead_id = b.id

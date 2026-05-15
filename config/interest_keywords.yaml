@@ -168,4 +168,6 @@ categorias:
       - whatsapp atolado
       - perdemos cliente no whatsapp
 
-teto_cumulativo: 100
+# Teto cumulativo de boost por rodada — alto o suficiente pra nao
+# capar. O score do lead agora eh ilimitado (reflete evidencia real).
+teto_cumulativo: 1000

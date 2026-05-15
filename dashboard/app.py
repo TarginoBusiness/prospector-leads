@@ -1152,8 +1152,13 @@ with aba_leads:
         "interest_count", "interest_categorias", "responsavel",
         "falso_lead", "falso_lead_motivo"
     ]].copy()
-    # score eh o RAW direto (numero, nao mais %)
+    # score eh o RAW direto (numero ilimitado, nao mais %)
     df_grid["score"] = df_grid["score_temperatura"].astype(int)
+    # 🔥 vai SO nos 5 maiores scores da view atual
+    max_score_view = int(df_grid["score"].max()) if len(df_grid) else 100
+    top5_ids = set(df_grid.nlargest(5, "score")["id"].tolist())
+    df_grid["is_top5"] = df_grid["id"].isin(top5_ids)
+    df_grid["max_score"] = max_score_view
     df_grid["telefone"] = df_grid["telefone"].fillna("—")
     df_grid["responsavel"] = df_grid["responsavel"].fillna("—")
     df_grid["interest_categorias"] = df_grid["interest_categorias"].fillna("")
@@ -1232,17 +1237,22 @@ with aba_leads:
     """)
 
     # Score progress bar — CLASS renderer (constroi DOM, nao retorna string)
-    # Score = numero RAW (nao mais %). Barra preenche proporcional ao valor (cap 100).
+    # Score = numero RAW ILIMITADO. 🔥 SO nos 5 maiores da view.
+    # Barra preenche proporcional ao max score atual.
     score_renderer = JsCode("""
     class ScoreRenderer {
         init(params) {
             const score = params.value || 0;
-            let grad, prefix;
-            if (score >= 90) { prefix = '🔥 '; grad = 'linear-gradient(90deg,#ff4b4b,#ff8c42)'; }
-            else if (score >= 60) { prefix = ''; grad = 'linear-gradient(90deg,#ff8c42,#ffa726)'; }
-            else if (score >= 30) { prefix = ''; grad = 'linear-gradient(90deg,#fbc02d,#fdd835)'; }
-            else { prefix = ''; grad = 'linear-gradient(90deg,#546e7a,#78909c)'; }
-            const fillPct = Math.min(100, Math.max(0, score));
+            const isTop5 = params.data && params.data.is_top5 === true;
+            const maxScore = (params.data && params.data.max_score) || 100;
+            const ratio = score / Math.max(maxScore, 1);
+            let grad;
+            if (isTop5)       { grad = 'linear-gradient(90deg,#ff4b4b,#ff8c42)'; }
+            else if (ratio >= 0.6) { grad = 'linear-gradient(90deg,#ff8c42,#ffa726)'; }
+            else if (ratio >= 0.3) { grad = 'linear-gradient(90deg,#fbc02d,#fdd835)'; }
+            else                   { grad = 'linear-gradient(90deg,#546e7a,#78909c)'; }
+            const prefix = isTop5 ? '🔥 ' : '';
+            const fillPct = Math.max(0, Math.min(100, ratio * 100));
             this.eGui = document.createElement('div');
             this.eGui.style.cssText = 'background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;margin-top:3px;min-width:80px;';
             const fill = document.createElement('div');
@@ -1325,6 +1335,8 @@ with aba_leads:
     gb.configure_column("responsavel", header_name="Responsável", width=160)
     gb.configure_column("falso_lead", hide=True)
     gb.configure_column("falso_lead_motivo", hide=True)
+    gb.configure_column("is_top5", hide=True)
+    gb.configure_column("max_score", hide=True)
     gb.configure_selection(selection_mode="single", use_checkbox=False)
 
     # Adiciona coluna virtual _btn (vazia, so pro renderer)

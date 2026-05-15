@@ -82,7 +82,7 @@ def main() -> None:
             UPDATE leads
             SET score_temperatura = CASE
                 WHEN b.telefone IS NULL THEN LEAST(25, GREATEST(0, b.base_score))
-                ELSE LEAST(100, GREATEST(0, b.base_score))
+                ELSE GREATEST(0, b.base_score)  -- score ILIMITADO p/ leads com telefone
             END
             FROM base b
             WHERE leads.id = b.id
