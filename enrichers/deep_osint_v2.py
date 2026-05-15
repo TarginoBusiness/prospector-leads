@@ -507,7 +507,7 @@ async def aprofundar_v2(
     log.info(
         f"  deep_osint_v2.2: {len(res.fontes_consultadas)} fontes "
         f"({len(res.textos_por_url)} paginas visitadas), "
-        f"{len(all_sinais)} sinais ({len(categorias_aplicadas)} cat), boost +{res.boost_score}, "
+        f"{len(res.sinais)} sinais ({len(categorias_aplicadas)} cat), boost +{res.boost_score}, "
         f"linkedin={bool(res.linkedin_url)} vagas={len(res.vaga_urls)} cnpj={bool(res.cnpj_data)}"
     )
     return res
