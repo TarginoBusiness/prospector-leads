@@ -69,6 +69,38 @@ categorias:
       - secretaria atende
       - nossa secretaria
 
+  # Contratando dev/programador/TI — demanda direta dos NOSSOS outros
+  # servicos (site, sistema, app, automacao). Empresa que vai gastar
+  # com tech = prospecto pra software-house tambem.
+  vaga_tech:
+    descricao: "CONTRATANDO dev/TI — empresa investindo em tech, prospecto pros nossos servicos de software/site/app"
+    boost: 70
+    palavras:
+      - vaga desenvolvedor
+      - vaga programador
+      - vaga programadora
+      - vaga ti
+      - vaga de ti
+      - vaga tecnologia
+      - vaga frontend
+      - vaga front-end
+      - vaga backend
+      - vaga back-end
+      - vaga fullstack
+      - vaga full-stack
+      - vaga dev
+      - vaga desenvolvedora
+      - oportunidade desenvolvedor
+      - oportunidade programador
+      - contratamos desenvolvedor
+      - contratando desenvolvedor
+      - contratando programador
+      - estagio tecnologia
+      - estagio em ti
+      - estagio em desenvolvimento
+      - vaga analista de sistemas
+      - vaga analista ti
+
   # DEMANDA EXPLICITA — peso maximo. Estao literalmente contratando pessoa
   # pra atender (sinal direto de carga de atendimento manual).
   vaga_atendimento:

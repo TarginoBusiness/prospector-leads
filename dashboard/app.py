@@ -287,6 +287,7 @@ def _wa_url(tel):
 # Card AMARELO na ficha (pisca atencao).
 CATEGORIAS_DEMANDA = {
     "vaga_atendimento",
+    "vaga_tech",
     "necessidade_explicita",
     "dor_explicita",
 }
