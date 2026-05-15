@@ -170,6 +170,33 @@ async def main(limit: int = 1000) -> None:
             categorias = sorted({s.categoria for s in r.sinais})
             breakdown_extra = {f"interest_{c}": r.boost_score for c in categorias} if categorias else {}
 
+            # email descoberto: 1) Receita  2) colhido do site (/contato, rodape)
+            email_descoberto = ""
+            if r.cnpj_data:
+                ev = (r.cnpj_data.get("email") or "").strip()
+                if "@" in ev and "." in ev:
+                    email_descoberto = ev
+            if not email_descoberto:
+                for ev in (r.contatos.get("emails") or []):
+                    ev = (ev or "").strip()
+                    if "@" in ev and "." in ev:
+                        email_descoberto = ev
+                        break
+
+            # ===== BOOSTS por dado descoberto (Instagram/email/CNPJ) =====
+            # Dados que comprovam que o lead esta "achavel" e pronto pra contato
+            # ja sao um sinal de qualidade — score sobe quando temos isso.
+            dados_boost = 0
+            if r.instagram_url:
+                dados_boost += 5
+                breakdown_extra["dado_instagram"] = 5
+            if email_descoberto or lead.get("email"):
+                dados_boost += 10
+                breakdown_extra["dado_email"] = 10
+            if r.cnpj_data:
+                dados_boost += 15
+                breakdown_extra["dado_cnpj"] = 15
+
             payload_extra = {
                 "deep_osint_v2": {
                     "fontes_consultadas": r.fontes_consultadas,
@@ -186,22 +213,9 @@ async def main(limit: int = 1000) -> None:
                 }
             }
 
-            # email descoberto: 1) Receita  2) colhido do site (/contato, rodape)
-            email_descoberto = ""
-            if r.cnpj_data:
-                ev = (r.cnpj_data.get("email") or "").strip()
-                if "@" in ev and "." in ev:
-                    email_descoberto = ev
-            if not email_descoberto:
-                for ev in (r.contatos.get("emails") or []):
-                    ev = (ev or "").strip()
-                    if "@" in ev and "." in ev:
-                        email_descoberto = ev
-                        break
-
             cur.execute(SQL_UPDATE_LEAD, {
                 "id": lead["id"],
-                "boost": r.boost_score,
+                "boost": r.boost_score + dados_boost,
                 "cnpj": r.cnpj_data.get("cnpj") if r.cnpj_data else None,
                 "email_receita": email_descoberto or None,
                 "breakdown_extra": json.dumps(breakdown_extra),

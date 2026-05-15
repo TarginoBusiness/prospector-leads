@@ -376,20 +376,12 @@ def show_lead_dialog(lead_id: int) -> None:
         st.error("Lead não encontrado.")
         return
 
-    # Cabecalho — mostra raw + relativo
+    # Cabecalho — score RAW direto
     raw_score = int(lead["score_temperatura"])
-    # Calcula relativo baseado no min/max — cacheado pra abrir a ficha rapido
-    try:
-        mn, mx = _score_min_max()
-        rng = max(mx - mn, 1)
-        rel_score = int(round(10 + 90 * (raw_score - mn) / rng))
-    except Exception:
-        rel_score = raw_score
-
-    score_emoji = "🔥" if rel_score >= 90 else "🟡" if rel_score >= 60 else "🧊"
+    score_emoji = "🔥" if raw_score >= 90 else "🟡" if raw_score >= 60 else "🧊"
     st.markdown(
         f"### {score_emoji} {lead['nome'] or '(sem nome)'} — "
-        f"**{rel_score}%** no ranking <span style='color:#888;font-size:14px;'>(raw: {raw_score} pts)</span>",
+        f"**Score: {raw_score}**",
         unsafe_allow_html=True,
     )
 
@@ -1022,18 +1014,12 @@ def painel_ao_vivo():
 
     leads_piscando = list(flash_state.keys())
 
-    # Métricas com delta — usa score RAW pra contar quentes (acima de 60 raw = top 25% provavelmente)
-    raw_min_m = int(df["score_temperatura"].min()) if len(df) else 0
-    raw_max_m = int(df["score_temperatura"].max()) if len(df) else 100
-    raw_range_m = max(raw_max_m - raw_min_m, 1)
-    # "Quente" = score relativo >= 60% (top 40% do ranking)
-    threshold_quente_raw = raw_min_m + (raw_range_m * 50) / 90  # rel 60% ↔ raw (~min + 55% do range)
-
+    # Métricas — agora com score RAW direto
     col1, col2, col3, col4, col5 = st.columns(5)
     delta_total = len(novos_ids) if novos_ids else None
     col1.metric("Total de leads", len(df), delta=delta_total)
-    col2.metric("Score médio", f"{df['score_temperatura'].mean():.0f} pts")
-    col3.metric("Top do ranking (≥60% rel)", int((df["score_temperatura"] >= threshold_quente_raw).sum()))
+    col2.metric("Score médio", f"{df['score_temperatura'].mean():.0f}")
+    col3.metric("Quentes (score ≥ 60)", int((df["score_temperatura"] >= 60).sum()))
     col4.metric("Com telefone 📱", int(df["telefone"].notna().sum()))
     col5.metric(
         "Novos hoje",
@@ -1051,7 +1037,7 @@ def painel_ao_vivo():
             nicho = r["nicho"] or "—"
             st.markdown(
                 f"""<div class="new-lead-card">
-                <strong>🔥 {score}%</strong> · <strong>{r['nome'] or 'sem nome'}</strong>
+                <strong>🔥 {score}</strong> · <strong>{r['nome'] or 'sem nome'}</strong>
                 · <code>{r['source']}</code> · 📍 {cidade} · 🏷️ {nicho} · 📞 {tel}
                 </div>""",
                 unsafe_allow_html=True,
@@ -1099,7 +1085,8 @@ with aba_leads:
         st.stop()
 
     fc1, fc2, fc3, fc4, fc5, fc6 = st.columns([2, 2, 2, 1, 1, 1])
-    score_min_rel = fc1.slider("Score mínimo (relativo %)", 0, 100, 50, step=5, help="100% = top do ranking, 10% = última posição")
+    raw_max_slider = int(df["score_temperatura"].max()) if len(df) else 100
+    score_min_raw = fc1.slider("Score mínimo", 0, max(100, raw_max_slider), 0, step=5)
     cidades_disp = ["(todas)"] + sorted([c for c in df["cidade_tag"].dropna().unique()])
     cidade_sel = fc2.multiselect("Cidade", cidades_disp, default=["(todas)"])
     nichos_disp = ["(todos)"] + sorted([n for n in df["nicho"].dropna().unique()])
@@ -1108,12 +1095,8 @@ with aba_leads:
     so_com_tel = fc5.checkbox("📱 Só com telefone", value=False)
     so_com_sinal = fc6.checkbox("🎯 Apenas com alto interesse declarado", value=False, help="Só leads que têm ao menos 1 sinal de interesse detectado via Deep OSINT")
 
-    # Converte score_min_rel pra raw threshold pra filtrar
-    raw_min_filt = int(df["score_temperatura"].min()) if len(df) else 0
-    raw_max_filt = int(df["score_temperatura"].max()) if len(df) else 100
-    raw_range_filt = max(raw_max_filt - raw_min_filt, 1)
-    # rel = 10 + 90*(raw-min)/range  ⇒  raw_threshold = min + range*(rel-10)/90
-    raw_threshold = raw_min_filt + raw_range_filt * max(0, score_min_rel - 10) / 90
+    # Filtro direto pelo score raw (sem porcentagem)
+    raw_threshold = score_min_raw
 
     flt = df["score_temperatura"] >= raw_threshold
     if "(todas)" not in cidade_sel and cidade_sel:
@@ -1144,16 +1127,8 @@ with aba_leads:
         st.rerun()
 
     # Score relativo: 100% = top 1 raw, 10% = ultimo. Linear baseado em min/max RAW.
-    raw_min = int(df["score_temperatura"].min()) if len(df) else 0
-    raw_max = int(df["score_temperatura"].max()) if len(df) else 100
-    raw_range = max(raw_max - raw_min, 1)
-
-    def _score_relativo(raw_int: int) -> int:
-        return int(round(10 + 90 * (raw_int - raw_min) / raw_range))
-
     st.caption(
         f"📊 **{len(df_f)} leads** no filtro · "
-        f"Score relativo (100% = top {raw_max} pts, 10% = base {raw_min} pts) · "
         f"💡 Clica em **📋** em qualquer linha da tabela pra abrir a ficha completa."
     )
 
@@ -1175,7 +1150,8 @@ with aba_leads:
         "interest_count", "interest_categorias", "responsavel",
         "falso_lead", "falso_lead_motivo"
     ]].copy()
-    df_grid["score_rel"] = df_grid["score_temperatura"].apply(_score_relativo)
+    # score eh o RAW direto (numero, nao mais %)
+    df_grid["score"] = df_grid["score_temperatura"].astype(int)
     df_grid["telefone"] = df_grid["telefone"].fillna("—")
     df_grid["responsavel"] = df_grid["responsavel"].fillna("—")
     df_grid["interest_categorias"] = df_grid["interest_categorias"].fillna("")
@@ -1254,6 +1230,7 @@ with aba_leads:
     """)
 
     # Score progress bar — CLASS renderer (constroi DOM, nao retorna string)
+    # Score = numero RAW (nao mais %). Barra preenche proporcional ao valor (cap 100).
     score_renderer = JsCode("""
     class ScoreRenderer {
         init(params) {
@@ -1263,13 +1240,14 @@ with aba_leads:
             else if (score >= 60) { prefix = ''; grad = 'linear-gradient(90deg,#ff8c42,#ffa726)'; }
             else if (score >= 30) { prefix = ''; grad = 'linear-gradient(90deg,#fbc02d,#fdd835)'; }
             else { prefix = ''; grad = 'linear-gradient(90deg,#546e7a,#78909c)'; }
+            const fillPct = Math.min(100, Math.max(0, score));
             this.eGui = document.createElement('div');
             this.eGui.style.cssText = 'background:#1a1a1a;border-radius:4px;height:18px;position:relative;overflow:hidden;margin-top:3px;min-width:80px;';
             const fill = document.createElement('div');
-            fill.style.cssText = `background:${grad};height:100%;width:${score}%;`;
+            fill.style.cssText = `background:${grad};height:100%;width:${fillPct}%;`;
             const label = document.createElement('div');
             label.style.cssText = 'position:absolute;top:0;left:0;right:0;text-align:center;line-height:18px;font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.7);';
-            label.textContent = `${prefix}${score}%`;
+            label.textContent = `${prefix}${score}`;
             this.eGui.appendChild(fill);
             this.eGui.appendChild(label);
         }
@@ -1334,7 +1312,7 @@ with aba_leads:
     gb.configure_default_column(resizable=True, sortable=True, filter=True, suppressHeaderMenuButton=False)
     gb.configure_column("id", header_name="ID", width=70, hide=True)
     gb.configure_column("_btn", header_name="📋", width=60, cellRenderer=btn_renderer, suppressMenu=True, sortable=False, filter=False, pinned="left")
-    gb.configure_column("score_rel", header_name="Score 🔥", width=120, cellRenderer=score_renderer, type=["numericColumn"])
+    gb.configure_column("score", header_name="Score 🔥", width=120, cellRenderer=score_renderer, type=["numericColumn"])
     gb.configure_column("interest_count", header_name="Sinais 🎯", width=150, cellRenderer=sinais_renderer)
     gb.configure_column("interest_categorias", hide=True)
     gb.configure_column("score_temperatura", hide=True)
