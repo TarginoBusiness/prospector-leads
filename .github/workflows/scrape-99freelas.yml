@@ -1,8 +1,9 @@
 name: Scrape 99Freelas (intent alto)
 
 on:
-  schedule:
-    - cron: "30 */1 * * *"
+  # DESLIGADO automatico — Targino pediu pra nao caçar mais leads novos.
+  # schedule:
+  #   - cron: "30 */1 * * *"
   workflow_dispatch:
 
 jobs:

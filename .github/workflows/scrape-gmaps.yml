@@ -1,8 +1,10 @@
 name: Scrape Google Maps (varredura larga)
 
 on:
-  schedule:
-    - cron: "0 5 * * *"   # 1x/dia as 5h UTC (2h Brasilia)
+  # DESLIGADO automatico — Targino pediu pra nao caçar mais leads novos
+  # (banco ja tem >6k). Pra reativar, descomenta a linha do cron abaixo.
+  # schedule:
+  #   - cron: "0 5 * * *"
   workflow_dispatch:
     inputs:
       limit:

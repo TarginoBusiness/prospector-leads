@@ -1,8 +1,9 @@
 name: Scrape Workana (intent alto)
 
 on:
-  schedule:
-    - cron: "0 */1 * * *"
+  # DESLIGADO automatico — Targino pediu pra nao caçar mais leads novos.
+  # schedule:
+  #   - cron: "0 */1 * * *"
   workflow_dispatch:
 
 jobs:
